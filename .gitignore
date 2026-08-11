@@ -118,6 +118,9 @@ ipch/
 *.sdf
 *.cachefile
 *.VC.db
+
+# SQLite veritabanı dosyaları (proje içi, kişiye özel)
+*.db
 *.VC.VC.opendb
 
 # Visual Studio profiler
