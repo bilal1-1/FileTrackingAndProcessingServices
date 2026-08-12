@@ -32,5 +32,23 @@ namespace FileTrackingAndProcessingServices.Controllers
             var newFileCount = await _scannerService.ScanFolderAsync();
             return Ok(new { message = $"{newFileCount} yeni dosya işlendi." });
         }
+
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetById(int id)
+        {
+            var file = await _fileService.GetByIdAsync(id);
+            if (file == null)
+            {
+                return NotFound(new { message = $"{id} numaralı dosya bulunamadı." });
+            }
+            return Ok(file);
+        }
+
+        [HttpGet("search")]
+        public async Task<IActionResult> Search([FromQuery] string extension)
+        {
+            var files = await _fileService.SearchByExtensionAsync(extension);
+            return Ok(files);
+        }
     }
 }
