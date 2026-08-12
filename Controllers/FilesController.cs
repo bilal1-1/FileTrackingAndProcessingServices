@@ -20,10 +20,10 @@ namespace FileTrackingAndProcessingServices.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll([FromQuery] FileQueryParameters parameters)
         {
-            var files = await _fileService.GetAllFilesAsync();
-            return Ok(files);
+            var result = await _fileService.GetAllFilesAsync(parameters);
+            return Ok(result);
         }
 
         [HttpPost("scan")]

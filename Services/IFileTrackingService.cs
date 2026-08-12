@@ -4,7 +4,7 @@ namespace FileTrackingAndProcessingServices.Services
 {
     public interface IFileTrackingService
     {
-        Task<List<TrackedFile>> GetAllFilesAsync();
+        Task<PagedResult<TrackedFile>> GetAllFilesAsync(FileQueryParameters parameters);
         Task<TrackedFile?> GetByIdAsync(int id);
         Task<List<TrackedFile>> SearchByExtensionAsync(string extension);
     }
