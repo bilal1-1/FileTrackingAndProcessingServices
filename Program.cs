@@ -18,6 +18,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<IFileTrackingService, FileTrackingService>();
+builder.Services.AddScoped<IFolderScannerService, FolderScannerService>();
 
 builder.Services.Configure<FolderWatchSettings>(
     builder.Configuration.GetSection("WatchSettings"));
