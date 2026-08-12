@@ -40,7 +40,14 @@ namespace FileTrackingAndProcessingServices.Services
                     _logger.LogError(ex, "Otomatik tarama sırasında hata oluştu.");
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(_settings.ScanIntervalSeconds), stoppingToken);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_settings.ScanIntervalSeconds), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break; // uygulama kapanıyor, döngüden temiz çık
+                }
             }
         }
     }

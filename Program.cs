@@ -9,7 +9,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 
 // Swagger/OpenAPI desteği
-
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -23,6 +22,7 @@ builder.Services.AddScoped<IFolderScannerService, FolderScannerService>();
 builder.Services.Configure<FolderWatchSettings>(
     builder.Configuration.GetSection("WatchSettings"));
 builder.Services.AddHostedService<FileScanBackgroundService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())

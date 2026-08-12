@@ -8,5 +8,4 @@ namespace FileTrackingAndProcessingServices.Services
         Task<TrackedFile?> GetByIdAsync(int id);
         Task<List<TrackedFile>> SearchByExtensionAsync(string extension);
     }
-    
 }
