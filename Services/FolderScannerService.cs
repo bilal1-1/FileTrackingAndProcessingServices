@@ -34,29 +34,31 @@ public async Task<int> ScanFolderAsync()
     var directoryInfo = new DirectoryInfo(_settings.FolderPath);
     var files = directoryInfo.GetFiles();
 
+    // 3. Kayıtlı dosyaların tamamını tek sorguda çek.
+    // Böylece döngü içinde her dosya için ayrı sorgu atılmaz (N+1 önlenir).
+    var existingFiles = await _context.TrackedFiles
+        .ToDictionaryAsync(f => f.FilePath);
+
     int newFileCount = 0;
 
-    // 3. Her dosyayı tek tek işle
+    // 4. Her dosyayı tek tek işle
     foreach (var file in files)
     {
         try
         {
-            // 4. Bu dosya daha önce kaydedilmiş mi? (tam yola göre tekrar kontrolü)
-            var existing = await _context.TrackedFiles
-                .FirstOrDefaultAsync(f => f.FilePath == file.FullName);
-
-            if (existing != null)
+            // 5. Bu dosya daha önce kaydedilmiş mi? (tam yola göre tekrar kontrolü)
+            if (existingFiles.TryGetValue(file.FullName, out var existing))
             {
                 // Zaten işlenmiş — tekrar İŞLENMEZ, yeni satır açılmaz.
                 // Sadece diskteki güncel bilgisi tazelenir.
                 existing.ModifiedAt = file.LastWriteTime;
                 existing.SizeBytes = file.Length;
 
-                _logger.LogInformation("Dosya zaten kayıtlı, bilgisi güncellendi: {FileName}", file.Name);
+                _logger.LogDebug("Dosya zaten kayıtlı, bilgisi güncellendi: {FileName}", file.Name);
                 continue;
             }
 
-            // 5. Yeni dosya — bilgilerini çıkar ve kaydet
+            // 6. Yeni dosya — bilgilerini çıkar ve kaydet
             var trackedFile = new TrackedFile
             {
                 FileName = file.Name,
@@ -78,7 +80,7 @@ public async Task<int> ScanFolderAsync()
         }
     }
 
-    // 6. Tüm yeni dosyaları tek seferde veritabanına yaz
+    // 7. Tüm yeni kayıtları ve güncellemeleri tek seferde veritabanına yaz
     await _context.SaveChangesAsync();
 
     return newFileCount;

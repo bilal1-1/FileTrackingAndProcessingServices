@@ -22,6 +22,7 @@ builder.Services.AddScoped<IFolderScannerService, FolderScannerService>();
 
 builder.Services.Configure<FolderWatchSettings>(
     builder.Configuration.GetSection("WatchSettings"));
+builder.Services.AddHostedService<FileScanBackgroundService>();
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
