@@ -1,4 +1,5 @@
 using FileTrackingAndProcessingServices.Data;
+using FileTrackingAndProcessingServices.Middleware;
 using FileTrackingAndProcessingServices.Models;
 using FileTrackingAndProcessingServices.Services;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +25,10 @@ builder.Services.Configure<FolderWatchSettings>(
 builder.Services.AddHostedService<FileScanBackgroundService>();
 
 var app = builder.Build();
+
+// Boru hattının en dışı: altındaki her katmanın hatasını yakalar,
+// bu yüzden diğer middleware'lerden ÖNCE eklenmeli.
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
