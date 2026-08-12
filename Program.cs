@@ -1,4 +1,5 @@
 using FileTrackingAndProcessingServices.Data;
+using FileTrackingAndProcessingServices.Models;
 using FileTrackingAndProcessingServices.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,6 +19,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddScoped<IFileTrackingService, FileTrackingService>();
 
+builder.Services.Configure<FolderWatchSettings>(
+    builder.Configuration.GetSection("WatchSettings"));
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
