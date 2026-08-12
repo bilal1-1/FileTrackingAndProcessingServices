@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using FileTrackingAndProcessingServices.Data;
 using FileTrackingAndProcessingServices.Models;
 using Microsoft.EntityFrameworkCore;
@@ -49,6 +50,20 @@ namespace FileTrackingAndProcessingServices.Services
                     // 5. Bu dosya daha önce kaydedilmiş mi? (tam yola göre tekrar kontrolü)
                     if (existingFiles.TryGetValue(file.FullName, out var existing))
                     {
+                        // İçerik değişmiş mi? Boyut ya da değiştirilme tarihi
+                        // farklıysa evet kabul edilir. Hash'i boş olan kayıtlar
+                        // (Hash alanı eklenmeden önce oluşmuş olanlar) da doldurulur.
+                        // Bu kontrol, alanlar tazelenmeden ÖNCE yapılmalı.
+                        bool hashGerekli = string.IsNullOrEmpty(existing.Hash)
+                            || existing.SizeBytes != file.Length
+                            || existing.ModifiedAt != file.LastWriteTime;
+
+                        if (hashGerekli)
+                        {
+                            existing.Hash = await ComputeHashAsync(file);
+                            _logger.LogDebug("Dosya değişmiş, hash yeniden hesaplandı: {FileName}", file.Name);
+                        }
+
                         // Zaten işlenmiş — tekrar İŞLENMEZ, yeni satır açılmaz.
                         // Sadece diskteki güncel bilgisi tazelenir.
                         existing.ModifiedAt = file.LastWriteTime;
@@ -65,6 +80,7 @@ namespace FileTrackingAndProcessingServices.Services
                         FilePath = file.FullName,
                         Extension = file.Extension,
                         SizeBytes = file.Length,
+                        Hash = await ComputeHashAsync(file),
                         CreatedAt = file.CreationTime,
                         ModifiedAt = file.LastWriteTime
                     };
@@ -84,6 +100,26 @@ namespace FileTrackingAndProcessingServices.Services
             await _context.SaveChangesAsync();
 
             return newFileCount;
+        }
+
+        /// <summary>
+        /// Dosya içeriğinin SHA-256 özetini hesaplar.
+        /// </summary>
+        private static async Task<string> ComputeHashAsync(FileInfo file)
+        {
+            // FileShare.ReadWrite: dosya başka bir süreç tarafından yazılmak üzere
+            // açık olsa bile okuyabilelim (örn. SQLite'ın açık tuttuğu .db dosyası).
+            await using var stream = new FileStream(
+                file.FullName,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite);
+
+            // Dosyanın tamamını belleğe almadan, akış halinde özetler.
+            // Böylece 2 GB'lık bir dosya da 2 GB RAM tüketmez.
+            byte[] hashBytes = await SHA256.HashDataAsync(stream);
+
+            return Convert.ToHexString(hashBytes).ToLowerInvariant();
         }
     }
 }
