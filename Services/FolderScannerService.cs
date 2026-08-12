@@ -41,19 +41,26 @@ public async Task<int> ScanFolderAsync()
     {
         try
         {
-            // 4. Bu dosya daha önce kaydedilmiş mi? (tekrar kontrolü)
-            bool alreadyExists = await _context.TrackedFiles
-                .AnyAsync(f => f.FileName == file.Name && f.ModifiedAt == file.LastWriteTime);
+            // 4. Bu dosya daha önce kaydedilmiş mi? (tam yola göre tekrar kontrolü)
+            var existing = await _context.TrackedFiles
+                .FirstOrDefaultAsync(f => f.FilePath == file.FullName);
 
-            if (alreadyExists)
+            if (existing != null)
             {
-                continue; // zaten var, atla
+                // Zaten işlenmiş — tekrar İŞLENMEZ, yeni satır açılmaz.
+                // Sadece diskteki güncel bilgisi tazelenir.
+                existing.ModifiedAt = file.LastWriteTime;
+                existing.SizeBytes = file.Length;
+
+                _logger.LogInformation("Dosya zaten kayıtlı, bilgisi güncellendi: {FileName}", file.Name);
+                continue;
             }
 
             // 5. Yeni dosya — bilgilerini çıkar ve kaydet
             var trackedFile = new TrackedFile
             {
                 FileName = file.Name,
+                FilePath = file.FullName,
                 Extension = file.Extension,
                 SizeBytes = file.Length,
                 CreatedAt = file.CreationTime,

@@ -1,0 +1,29 @@
+﻿using Microsoft.EntityFrameworkCore.Migrations;
+
+#nullable disable
+
+namespace FileTrackingAndProcessingServices.Migrations
+{
+    /// <inheritdoc />
+    public partial class AddFilePathToTrackedFile : Migration
+    {
+        /// <inheritdoc />
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.AddColumn<string>(
+                name: "FilePath",
+                table: "TrackedFiles",
+                type: "TEXT",
+                nullable: false,
+                defaultValue: "");
+        }
+
+        /// <inheritdoc />
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropColumn(
+                name: "FilePath",
+                table: "TrackedFiles");
+        }
+    }
+}

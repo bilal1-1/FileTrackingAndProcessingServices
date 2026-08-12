@@ -121,6 +121,8 @@ ipch/
 
 # SQLite veritabanı dosyaları (proje içi, kişiye özel)
 *.db
+*.db-wal
+*.db-shm
 *.VC.VC.opendb
 
 # Visual Studio profiler
