@@ -50,9 +50,10 @@ namespace FileTrackingAndProcessingServices.Services
                     // 5. Bu dosya daha önce kaydedilmiş mi? (tam yola göre tekrar kontrolü)
                     if (existingFiles.TryGetValue(file.FullName, out var existing))
                     {
-                        // İçerik değişmiş mi? Boyut ya da değiştirilme tarihi
-                        // farklıysa evet kabul edilir. Hash'i boş olan kayıtlar
-                        // (Hash alanı eklenmeden önce oluşmuş olanlar) da doldurulur.
+                        // Boyut ya da değiştirilme tarihi farklıysa içerik değişmiş
+                        // OLABİLİR — kesin bilmenin tek yolu hash'i yeniden hesaplayıp
+                        // eskisiyle karşılaştırmak. Hash'i boş olan kayıtlar (Hash alanı
+                        // eklenmeden önce oluşmuş olanlar) da burada doldurulur.
                         // Bu kontrol, alanlar tazelenmeden ÖNCE yapılmalı.
                         bool hashGerekli = string.IsNullOrEmpty(existing.Hash)
                             || existing.SizeBytes != file.Length
@@ -60,8 +61,27 @@ namespace FileTrackingAndProcessingServices.Services
 
                         if (hashGerekli)
                         {
-                            existing.Hash = await ComputeHashAsync(file);
-                            _logger.LogDebug("Dosya değişmiş, hash yeniden hesaplandı: {FileName}", file.Name);
+                            var yeniHash = await ComputeHashAsync(file);
+
+                            if (string.IsNullOrEmpty(existing.Hash))
+                            {
+                                _logger.LogDebug("Hash'i olmayan kayıt dolduruldu: {FileName}", file.Name);
+                            }
+                            else if (existing.Hash != yeniHash)
+                            {
+                                _logger.LogInformation("Dosya içeriği değişti: {FileName}", file.Name);
+                            }
+                            else
+                            {
+                                // Hash aynıysa içerik de aynıdır; boyut değişseydi hash de
+                                // değişirdi. Demek ki hashGerekli'yi tetikleyen tek şey
+                                // tarihmiş — ör. yedekten geri yükleme, dosyanın açılıp
+                                // değiştirilmeden kaydedilmesi.
+                                _logger.LogDebug(
+                                    "Değiştirilme tarihi değişti ama içerik aynı: {FileName}", file.Name);
+                            }
+
+                            existing.Hash = yeniHash;
                         }
 
                         // Zaten işlenmiş — tekrar İŞLENMEZ, yeni satır açılmaz.
