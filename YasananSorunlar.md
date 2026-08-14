@@ -341,64 +341,139 @@ Bir alanı hesaplamak, o alanın işe yaradığı anlamına gelmez. `Hash` kolon
 
 İkinci ders: bir kontrolün *maliyetini* ödeyip *faydasını* almamak mümkündür. Hash her değişiklikte hesaplanıyor (maliyet) ama karşılaştırılmıyordu (fayda alınmıyor). Bu tür durumlar, "şu alan hangi kararı etkiliyor?" diye sorarak ortaya çıkar.
 
+---
 
+## Sorun 5: Uzantı Araması Büyük/Küçük Harfe Duyarlıydı
 
-Tamam, hepsini tek tek geçelim. Önce şu an nerede olduğumuz:
+### Belirti
 
-Zaten commit'lenmiş: 2258a79 — adım 1 (hash karşılaştırması). Bu FolderScannerService.cs'i değiştirmişti.
+Bu hata bir kullanıcı şikâyetiyle değil, **birim testleri yazılırken** ortaya çıktı.
 
-Commit'lenmemiş: 7 dosya, 193 satır ekleme, hiç silme yok. Yani mevcut hiçbir davranış değişmedi, sadece üzerine eklendi.
+Diskte `BELGE.TXT` adında bir dosya varken `GET /api/files/search?extension=.txt` çağrısı **boş liste** dönüyordu. Ne hata mesajı ne exception vardı — endpoint 200 OK ve `[]` döndürüyordu. Yani hata, "sonuç yok" görüntüsünün arkasına saklanıyordu.
+
+Şüpheyi ölçmek için yazılan geçici test:
+
+```csharp
+ortam.Ekle(VeritabaniOrtami.Dosya("BELGE.TXT", extension: ".TXT"));
+
+var sonuc = await service.SearchByExtensionAsync(".txt");
+
+Assert.Single(sonuc);
+```
+
+Sonuç:
+
+```
+Assert.Single() Failure: The collection was empty
+```
+
+### Kök Neden
+
+Tek başına yanlış olmayan iki davranış üst üste bindi.
+
+**1. Tarayıcı uzantıyı diskteki haliyle kaydediyor.** `FolderScannerService`, `file.Extension` değerini olduğu gibi yazıyor. Windows dosya adlarında büyük/küçük harfi koruduğu için `BELGE.TXT` dosyası veritabanına `.TXT` olarak giriyor. Bu doğru davranış — tarayıcının veriyi değiştirmemesi beklenir.
+
+**2. Karşılaştırma harfe duyarlı yapılıyordu.** Servisteki sorgu şöyleydi:
+
+```csharp
+return await _context.TrackedFiles
+    .Where(f => f.Extension == extension)
+    .ToListAsync();
+```
+
+Bu `==`, SQLite tarafında varsayılan (BINARY) karşılaştırmaya çevrilir ve `.TXT` ile `.txt` farklı sayılır.
+
+İkisi birleşince kullanıcı, aramada **diskteki harf düzenini tahmin etmek zorunda** kalıyordu. Bir kullanıcının bunu bilmesi beklenemez; üstelik aynı klasörde `rapor.txt` ve `BELGE.TXT` varsa tek bir arama ikisini birden getiremezdi.
+
+### Çözüm
+
+Karşılaştırmanın iki tarafı da küçük harfe indiriliyor — ama **bilerek farklı metotlarla**:
+
+```csharp
+var aranan = extension.ToLowerInvariant();
+
+return await _context.TrackedFiles
+    .Where(f => f.Extension.ToLower() == aranan)
+    .ToListAsync();
+```
+
+**Neden iki farklı metot?** İşin ince yeri burası.
+
+- **Aranan değer (C# tarafı) `ToLowerInvariant()` ile küçültülür.** `ToLower()` kullanılsaydı makinenin kültür ayarı devreye girerdi. Türkçe kültürde `"I"` harfinin küçüğü `"ı"`dır; yani `".TIF"` → `".tıf"` olurdu. Veritabanındaki `lower()` ise kültür tanımaz, `".tif"` üretir. Noktalı ı ile noktasız i eşleşmez ve arama yine sessizce boş dönerdi — üstelik bu hata **sadece Türkçe makinelerde** görülürdü.
+- **Kolon tarafındaki `ToLower()` SQL'e `lower()` olarak çevrilir.** Karşılaştırma veritabanında yapılır, tüm tablo belleğe çekilmez.
+
+**Elenen alternatifler:**
+
+| Yol | Neden seçilmedi |
+|-----|-----------------|
+| `EF.Functions.Like(...)` | SQLite'ta LIKE zaten harfe duyarsız, ama `%` ve `_` karakterlerini joker sayar. Kullanıcı `.t_t` ararsa beklenmedik sonuç döner |
+| Kolona `NOCASE` collation | Migration gerektirir ve o kolon üzerindeki *tüm* karşılaştırmaları etkiler — yalnızca aramayı ilgilendiren bir kararın şemaya yazılması |
+
+### Doğrulama
+
+Davranış altı testle güvenceye alındı:
+
+| Test | Kapsadığı durum |
+|------|-----------------|
+| `Search_BuyukKucukHarfFarki_YineDeEslesir` | `.TXT`↔`.txt`, `.txt`↔`.TXT`, `.TxT`↔`.tXt` |
+| `Search_IHarfiIcerenUzanti_MakineKulturundenEtkilenmez` | `.TIF`↔`.tif` — yukarıdaki kültür tuzağı |
+| `Search_HarfDuyarsizlik_YanlisUzantilariGetirmez` | Duyarsızlık, `.pdf` ve `.txtx` gibi alakasız uzantıları getirmemeli |
+
+Testler önce **eski koda karşı** çalıştırıldı:
+
+```
+Failed: 6, Passed: 2     ← eski kod (f.Extension == extension)
+Passed: 71, Failed: 0    ← düzeltilmiş kod
+```
+
+Bu, testlerin gerçekten bu düzeltmeyi koruduğunu gösteriyor: kod eski haline dönerse testler kırmızı yanar.
+
+### Ders
+
+**Testin değeri sadece ileride bozulmayı yakalamak değil; yazılırken hâlihazırda var olan hatayı ortaya çıkarmaktır.** Bu hata aylardır koddaydı ve Swagger üzerinden elle defalarca test edilmişti. Görülmemesinin sebebi şu: elle test eden kişi kendi oluşturduğu dosyayı arar, dolayısıyla harf düzenini zaten bilir. Test yazmak ise "ya kullanıcı farklı yazsaydı?" sorusunu sormaya zorluyor.
+
+İkinci ders: **sessiz hatalar en tehlikelileridir.** Exception fırlatan bir hata kendini duyurur. Boş liste dönen bir hata ise "aradığın şey yok" gibi görünür — kullanıcı sonucun yanlış olduğunu anlamaz, aramayı bırakır.
+
+Üçüncü ders: **kültüre bağlı metotlar sessiz taşıyıcıdır.** `ToLower()` çoğu makinede doğru çalışır, Türkçe kültürde `I/ı` yüzünden bozulur. Karşılaştırma ve normalleştirme işlerinde `ToLowerInvariant()` / `OrdinalIgnoreCase` tercih edilmeli; kültüre duyarlı olanlar yalnızca kullanıcıya *gösterilecek* metinler içindir.
 
 ---
-Grup 1 — Paket sabitleme (csproj, 6 satır)
 
-<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+## Açık Konu: Silinen Dosyalar Veritabanında Kalıyor
 
-EF Core'un dolaylı olarak getirdiği 2.1.11'i doğrudan referansla 2.1.12'ye çekiyor. Bu bir tasarım kararı, teknik zorunluluk değil — alternatifi uyarıyı görmezden gelmek. Sabitlemenin bedeli: EF Core sürümü yükseldiğinde bu satır eskiyebilir, o yüzden yoruma "gereksizleşirse kaldırılabilir" notu düştüm. İstemezsen bu grubu hiç commit'lemeyebilirsin, diğer ikisi ondan bağımsız.
+**Durum: çözüm aranacak. Henüz uygulanmadı.**
 
-Grup 2 — Yinelenen tespiti (5 dosya)
+### Belirti
 
-Models/DuplicateGroup.cs (yeni) — API'nin döndüğü şeklin sınıfı. Hash, SizeBytes, Count, WastedBytes, Files.
+Diskten silinen bir dosyanın `TrackedFiles` kaydı veritabanında sonsuza kadar duruyor. `FolderScannerService` yalnızca *ekleme* ve *güncelleme* yapıyor; hiçbir yerde silme yok. Sonuç olarak `GET /api/files` çıktısı, artık var olmayan dosyaları da listeliyor.
 
-Data/AppDbContext.cs — OnModelCreating metodu eklendi, Hash kolonuna index tanımlanıyor. Daha önce bu metot hiç yoktu; base.OnModelCreating(modelBuilder) çağrısını koydum ki ileride EF'in kendi yapılandırması ezilmesin.
+Sorun 4'ün doğrulaması sırasında somut olarak görüldü: test için oluşturulan üç dosya (`kopya-a.txt`, `kopya-b.txt`, `tekil-c.txt`) diskten silindiği halde kayıtları veritabanında kaldı.
 
-Migrations/…AddHashIndex.cs (yeni) + AppDbContextModelSnapshot.cs (2 satır) — index'in veritabanına yansıması. Migration'ın içi sadece CreateIndex/DropIndex; hiçbir veri değişmiyor, kolon eklenmiyor. dotnet ef database update çalıştırıldı, uygulandı.
+### Neden Önemli
 
-Services/IFileTrackingService.cs — tek satır, GetDuplicatesAsync() sözleşmeye eklendi.
+Yinelenen tespiti bu boşluktan doğrudan etkileniyor. Silinmiş bir dosyanın kaydı durduğu sürece `GET /api/files/duplicates`, artık var olmayan dosyalar için "şu kadar yer israf ediliyor" diyebilir — yani **yanlış bilgi** üretir.
 
-Services/FileTrackingService.cs — asıl iş burada, 43 satır. Üç aşamalı:
+### Tespit Nasıl Yapılabilir
 
-// 1. Sadece yinelenen HASH DEĞERLERİNİ bul (satırları değil)
-.Where(f => f.Hash != "").GroupBy(f => f.Hash).Where(g => g.Count() > 1).Select(g => g.Key)
-Bu SQL'e GROUP BY Hash HAVING COUNT(*) > 1 olarak çevriliyor. Veritabanı sadece hash listesi döndürüyor, satırları değil.
+Ek bir tarama ya da ek sorgu gerekmiyor. `ScanFolderAsync` zaten taramanın başında tüm kayıtları tek sorguda `existingFiles` sözlüğüne alıyor. Döngüde diskte karşılaşılan her kayıt işaretlenirse, döngü bittiğinde sözlükte işaretsiz kalanlar tam olarak "diskte artık yok" olan kayıtlardır.
 
-// 2. Sadece o hash'lere ait satırları çek
-.Where(f => duplicateHashes.Contains(f.Hash))
-SQL IN olarak çevriliyor. Tek sorgu — her hash için ayrı sorgu atılmıyor (N+1 yok).
+### Düşünülen Yollar
 
-// 3. Bellekte grupla
-Bu aşama bellekte ama elde zaten sadece yinelenen kayıtlar var, tüm tablo değil.
+| Yol | Nasıl | Bedeli |
+|-----|-------|--------|
+| Kaydı sil (hard delete) | Satır veritabanından uçar | En basit, mevcut endpoint'ler etkilenmez. Bilgi kalıcı kaybolur |
+| Silinmiş işaretle (soft delete) | `IsDeleted` + `DeletedAt` alanları | Tarihçe korunur, geri dönüşü var. Tüm sorgulara filtre eklemek gerekir |
+| Sayaçlı silme | Üst üste N taramada görülmezse sil | Geçici erişilemezliğe dayanıklı. Ek alan ve karmaşıklık |
 
-Neden iki sorgu, tek sorgu değil? EF Core, GroupBy sonucunda tam entity koleksiyonu isteyen sorguları SQL'e çeviremez — ya istemcide değerlendirir (tüm tabloyu belleğe çeker) ya da hata verir. İki sorgulu desen bunun standart çözümü.
+### Uygularken Dikkat Edilecek Üç Nokta
 
-Controllers/FilesController.cs — 12 satır, GET /api/files/duplicates. Rota çakışması yok: ASP.NET Core'da sabit metinli segmentler (duplicates) parametreli olanlara ({id}) göre öncelikli. Zaten var olan search endpoint'i bunu ispatlıyor.
+**1. Silme kapsamı taranan klasörle sınırlanmalı.** Tarama tek bir klasörü, alt klasörler hariç yapıyor (`GetFiles()`); ama `existingFiles` veritabanındaki *tüm* kayıtları çekiyor. `appsettings.json`'daki `FolderPath` bir gün değişirse, eski klasörün kayıtları "diskte yok" görünür ve haksız yere silinir.
 
-Grup 3 — YasananSorunlar.md (117 satır)
+**2. Klasör erişilemezken silme çalışmamalı.** Bu koruma şu an zaten var: `Directory.Exists` başarısızsa metot en başta `return 0` yapıyor, silme koduna hiç ulaşılmaz. Eklenecek kod bu davranışı bozmamalı.
 
-"Sorun 4" bölümü. Belirti (hash yazılıyor, kimse okumuyor) → kök neden (karşılaştırılmıyor + tüketici yok) → çözüm → bilinçli kapsam dışı (boyut+tarih aynı kalıp içerik değişen senaryo, neden kapatmadığımız) → doğrulama tablosu → ders.
+**3. `duplicates` sorgusu silinmişleri saymamalı.** Soft delete seçilirse filtre şart; yoksa yukarıdaki yanlış bilgi üretilmeye devam eder.
 
----
-Dikkatini çekmek istediğim üç şey
+### Kapsam Dışı Sayılan
 
-1. Veritabanında 3 artık kayıt var. Test için kopya-a.txt, kopya-b.txt, tekil-c.txt oluşturdum, doğruladım, sonra dosyaları sildim — ama tarayıcı diskten silinen dosyaların kayıtlarını veritabanından temizlemiyor. Yani dosyatakip.db içinde artık var olmayan 3 dosyanın satırı duruyor. .db git'e girmiyor, commit'i etkilemez ama GET /api/files çıktısında görünürler. Temizlemek istersen:
+Dosya *taşındığında* bu mekanizma onu "silinmiş + yeni eklenmiş" olarak görür. Hash aynı kaldığı için aslında taşındığı çıkarılabilir, ama bu ayrı bir özellik — burada ele alınmayacak.
 
-dotnet ef database drop --force
-dotnet ef database update
 
-Bu arada bu, projede daha önce konuşmadığımız gerçek bir boşluk: silinen dosyalar veritabanında sonsuza kadar kalıyor. Ayrı bir iş, şimdi açmayalım ama not edeyim.
-
-2. Git satır sonu uyarıları göreceksin (LF will be replaced by CRLF). Benim yazdığım dosyalar LF ile kaydedildi, git bunları Windows standardına çeviriyor. Zararsız, commit düzgün olur.
-
-3. \ No newline at end of file işareti AppDbContext.cs ve FileTrackingService.cs diff'lerinde görünüyor — bu önceden de vardı, benim eklediğim bir şey değil.
-
-Bir şeyi değiştirmemi ister misin, yoksa commit'lere geçelim mi?
