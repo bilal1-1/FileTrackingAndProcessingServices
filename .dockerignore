@@ -1,0 +1,29 @@
+# Derleme bağlamına (build context) girmemesi gerekenler.
+# Buraya yazılanlar "docker build" sırasında Docker'a hiç gönderilmez:
+# hem imaj küçülür hem de yereldeki dosyalar container'a sızmaz.
+
+# Yerel derleme çıktıları. Container kendi derlemesini yapar; bunlar
+# gönderilirse hem bağlam şişer hem de Linux imajına Windows çıktıları karışır.
+**/bin/
+**/obj/
+
+# Yereldeki veritabanı. Gönderilirse imajın içine test kayıtlarıyla birlikte
+# hazır bir veritabanı gömülür — container her açılışta o eski veriyle başlar.
+*.db
+*.db-wal
+*.db-shm
+
+# Testler container'da çalışmıyor, imajda yer kaplamalarına gerek yok.
+Tests/
+
+# Sürüm kontrolü ve editör dosyaları
+.git/
+.gitignore
+.gitattributes
+.vs/
+.vscode/
+
+# Dokümantasyon ve Docker'ın kendi dosyaları
+*.md
+Dockerfile
+.dockerignore
