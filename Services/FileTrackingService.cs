@@ -72,8 +72,21 @@ namespace FileTrackingAndProcessingServices.Services
         
         public async Task<List<TrackedFile>> SearchByExtensionAsync(string extension)
         {
+            // Uzantı karşılaştırması büyük/küçük harf duyarsız olmalı: diskte
+            // "BELGE.TXT" varsa tarayıcı uzantıyı ".TXT" olarak kaydeder, kullanıcı
+            // ise ".txt" arar. Duyarlı karşılaştırma bu dosyayı hiç bulamıyordu.
+            //
+            // İki taraf da küçük harfe indiriliyor, ama farklı metotlarla:
+            // - Aranan değer C# tarafında ToLowerInvariant() ile küçültülür.
+            //   ToLower() kullanılsaydı makinenin kültürü devreye girerdi; Türkçe
+            //   kültürde ".TIF" -> ".tıf" olur ve veritabanındaki ".tif" ile
+            //   eşleşmezdi.
+            // - Kolon tarafındaki ToLower() SQL'e lower() olarak çevrilir ve
+            //   karşılaştırma veritabanında yapılır; tüm tablo belleğe çekilmez.
+            var aranan = extension.ToLowerInvariant();
+
             return await _context.TrackedFiles
-                .Where(f => f.Extension == extension)
+                .Where(f => f.Extension.ToLower() == aranan)
                 .ToListAsync();
         }
 
