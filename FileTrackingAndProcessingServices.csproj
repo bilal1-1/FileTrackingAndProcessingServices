@@ -6,6 +6,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!-- Test projesi bu klasörün altında (Tests/) duruyor. SDK tarzı projeler
+       varsayılan olarak tüm alt klasörlerdeki .cs dosyalarını derlemeye dahil
+       eder; bu satır olmadan test dosyaları web projesine karışır ve derleme
+       bozulur. Testler kendi projesinden derlenir. -->
+  <ItemGroup>
+    <Compile Remove="Tests/**" />
+    <Content Remove="Tests/**" />
+    <EmbeddedResource Remove="Tests/**" />
+    <None Remove="Tests/**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
