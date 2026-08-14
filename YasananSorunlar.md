@@ -223,3 +223,182 @@ Aynı `id`, güncellenmiş boyut ve tarih — yeni satır açılmadığının, k
 "Bu kaydı daha önce gördüm mü?" kontrolü, **zamanla değişmeyen bir kimlik** üzerinden yapılmalıdır. Boyut, değiştirilme tarihi gibi alanları kimliğin parçası yapmak, sürekli değişen kayıtlarda sonsuz kopya üretir. Doğru ayrım şudur: değişmeyen alan **kimliktir** (onunla ara), değişen alanlar **veridir** (onları güncelle).
 
 İkinci ders: bir sistem kendi çıktısını girdi olarak okuyorsa (burada tarayıcının kendi veritabanı dosyasını taraması) geri besleme döngüsü oluşabilir. İzlenen alan ile sistemin kendi çalışma alanının ayrı tutulması, bu tür döngüleri baştan engeller.
+
+---
+
+## Sorun 4: SHA-256 Hash Hesaplanıyordu Ama Hiçbir Kararı Etkilemiyordu
+
+### Belirti
+
+`TrackedFile` modeline `Hash` alanı eklendi, her dosya için SHA-256 hesaplanıp veritabanına yazıldı. Ancak "bu hash ne işe yarıyor?" sorusu sorulduğunda somut bir cevap çıkmadı.
+
+Projede `Hash` geçen yerler arandığında durum netleşti:
+
+```
+Models/TrackedFile.cs          → alanın tanımı
+Services/FolderScannerService  → hesaplama ve yazma
+Migrations/...                 → kolon tanımı
+```
+
+Hiçbir controller, hiçbir servis metodu bu alanı **okumuyordu**. Hash yazılıyor ama kimse sormuyordu — yani maliyeti olan (her dosyanın baştan sona okunması) ama karşılığı olmayan bir alandı.
+
+### Kök Neden
+
+İki ayrı eksiklik vardı.
+
+**1. Hash karşılaştırılmıyor, sadece üzerine yazılıyordu.**
+
+`FolderScannerService` içindeki kod şöyleydi:
+
+```csharp
+bool hashGerekli = string.IsNullOrEmpty(existing.Hash)
+    || existing.SizeBytes != file.Length
+    || existing.ModifiedAt != file.LastWriteTime;
+
+if (hashGerekli)
+{
+    existing.Hash = await ComputeHashAsync(file);   // eski değere hiç bakılmıyor
+    _logger.LogDebug("Dosya değişmiş, hash yeniden hesaplandı: {FileName}", file.Name);
+}
+```
+
+Buradaki mantık ters dönmüş durumdaydı: "değişti mi?" kararını **boyut ve tarih** veriyor, hash ise karar verildikten *sonra* hesaplanıp saklanıyordu. Eski hash ile yeni hash hiçbir zaman karşılaştırılmadığı için, içeriğin gerçekten değişip değişmediği bilinmiyordu.
+
+Somut sonucu: bir dosya yedekten geri yüklendiğinde veya açılıp değiştirilmeden kaydedildiğinde `ModifiedAt` değişir ama içerik aynı kalır. Bu durumda log `"Dosya değişmiş"` diyordu — **yanlış bir ifade**. Servisin elinde doğruyu söylemesini sağlayacak veri (yeni hash) vardı, sadece eskisiyle kıyaslamıyordu.
+
+**2. Hash'i tüketen hiçbir özellik yoktu.**
+
+Bir hash'in bir izleme servisinde yapabileceği iki iş vardır: *aynı içerikli dosyaları eşleştirmek* (yinelenen tespiti) ve *içeriğin değişip değişmediğini kesin söylemek* (bütünlük). İkisi de yazılmamıştı.
+
+### Çözüm
+
+**1. Hash, üzerine yazılmadan önce eskisiyle karşılaştırılıyor.** Üç durum ayrıştırıldı:
+
+```csharp
+if (hashGerekli)
+{
+    var yeniHash = await ComputeHashAsync(file);
+
+    if (string.IsNullOrEmpty(existing.Hash))
+        _logger.LogDebug("Hash'i olmayan kayıt dolduruldu: {FileName}", file.Name);
+    else if (existing.Hash != yeniHash)
+        _logger.LogInformation("Dosya içeriği değişti: {FileName}", file.Name);
+    else
+        _logger.LogDebug("Değiştirilme tarihi değişti ama içerik aynı: {FileName}", file.Name);
+
+    existing.Hash = yeniHash;
+}
+```
+
+Üçüncü daldaki çıkarım şuna dayanıyor: boyut değişseydi hash de değişirdi. Hash aynı çıktıysa boyut da aynıdır, dolayısıyla `hashGerekli`'yi tetikleyen tek şey tarih olabilir.
+
+**2. Yinelenen dosya tespiti eklendi.** `GET /api/files/duplicates` endpoint'i, aynı hash'e sahip kayıtları gruplayıp döner:
+
+```csharp
+var duplicateHashes = await _context.TrackedFiles
+    .Where(f => f.Hash != "")
+    .GroupBy(f => f.Hash)
+    .Where(g => g.Count() > 1)
+    .Select(g => g.Key)
+    .ToListAsync();
+```
+
+Gruplama ve sayma veritabanında yapılır (`GROUP BY ... HAVING COUNT(*) > 1`); belleğe yalnızca yinelenen kayıtlar çekilir, tüm tablo değil. Hash'i boş olan kayıtlar dışarıda bırakılır — henüz hesaplanmamış olmaları onları birbirinin kopyası yapmaz.
+
+Yanıt, her grup için boşa giden alanı (`WastedBytes = SizeBytes * (Count - 1)`) da içerir ve gruplar bu değere göre azalan sıralanır; listeye bakan kişi için en işe yarar sıralama budur.
+
+**3. `Hash` kolonuna index eklendi** (`AddHashIndex` migration'ı). Gruplama sorgusu index olmadan her çağrıda tüm tabloyu tarardı. Index **benzersiz değil** — aynı hash'in birden fazla satırda bulunması zaten aradığımız durum.
+
+### Bilinçli Olarak Kapsam Dışı Bırakılan
+
+**Boyutu ve tarihi aynı kalıp içeriği değişen dosyalar tespit edilmiyor.**
+
+Aynı uzunlukta bir düzenleme yapılır ve `LastWriteTime` da korunursa (bazı yedekleme/eşitleme araçları bunu yapar), `hashGerekli` koşulu `false` kalır, hash hiç hesaplanmaz ve değişiklik kaçar. Üstelik veritabanındaki hash sessizce yanlış hale gelir.
+
+Bunu yakalamanın tek yolu hash'i **koşulsuz**, yani her taramada her dosya için hesaplamaktır. Bu da her taramanın klasördeki tüm baytları baştan sona okuması demektir — 500 GB'lık bir klasörde her tarama 500 GB okuma anlamına gelir. Ödev ölçeğinde bu maliyet, kapattığı riskle orantısız bulundu.
+
+Boyut + tarih ön kontrolü, gerçek dosya sistemlerinin ezici çoğunluğunda doğru çalışan pratik bir sezgiseldir; bilinçli olarak korundu. Gerçekten gerekseydi çözüm, ayrı bir "derin doğrulama" modu (ör. gecelik tam tarama) olurdu — sürekli çalışan tarama döngüsüne yüklenmezdi.
+
+### Doğrulama
+
+İçeriği birebir aynı iki dosya (`kopya-a.txt`, `kopya-b.txt`) ve farklı içerikli bir üçüncü dosya (`tekil-c.txt`) oluşturuldu.
+
+| Adım | Beklenen | Sonuç |
+|------|----------|-------|
+| `sha256sum` ile dış doğrulama | a ve b aynı, c farklı | ✔ `5fe8d301…` / `5fe8d301…` / `a12cbe81…` |
+| `GET /api/files/duplicates` | a+b tek grupta, c yok | ✔ `count: 2`, `wastedBytes: 24`, c listede değil |
+| Servisin ürettiği hash | `sha256sum` çıktısıyla birebir aynı | ✔ `5fe8d301…` |
+| `kopya-a.txt` içeriği değiştirildi, tekrar tarandı | grup dağılır, liste boşalır | ✔ `[]` |
+| `kopya-b.txt` içeriği değiştirildi | log: içerik değişti | ✔ `Dosya içeriği değişti: kopya-b.txt` |
+
+Servisin hesapladığı hash'in bağımsız bir araçla (`sha256sum`) birebir eşleşmesi, implementasyonun doğruluğunu dışarıdan kanıtlıyor.
+
+Test dosyaları doğrulamadan sonra silindi.
+
+### Ders
+
+Bir alanı hesaplamak, o alanın işe yaradığı anlamına gelmez. `Hash` kolonu vardı, doğru hesaplanıyordu, migration'ı bile yazılmıştı — ama hiçbir sorgu onu okumadığı için sistemin davranışına hiçbir katkısı yoktu. **Bir verinin değeri, onu tüketen bir karar ya da özellik olduğunda doğar.**
+
+İkinci ders: bir kontrolün *maliyetini* ödeyip *faydasını* almamak mümkündür. Hash her değişiklikte hesaplanıyor (maliyet) ama karşılaştırılmıyordu (fayda alınmıyor). Bu tür durumlar, "şu alan hangi kararı etkiliyor?" diye sorarak ortaya çıkar.
+
+
+
+Tamam, hepsini tek tek geçelim. Önce şu an nerede olduğumuz:
+
+Zaten commit'lenmiş: 2258a79 — adım 1 (hash karşılaştırması). Bu FolderScannerService.cs'i değiştirmişti.
+
+Commit'lenmemiş: 7 dosya, 193 satır ekleme, hiç silme yok. Yani mevcut hiçbir davranış değişmedi, sadece üzerine eklendi.
+
+---
+Grup 1 — Paket sabitleme (csproj, 6 satır)
+
+<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+
+EF Core'un dolaylı olarak getirdiği 2.1.11'i doğrudan referansla 2.1.12'ye çekiyor. Bu bir tasarım kararı, teknik zorunluluk değil — alternatifi uyarıyı görmezden gelmek. Sabitlemenin bedeli: EF Core sürümü yükseldiğinde bu satır eskiyebilir, o yüzden yoruma "gereksizleşirse kaldırılabilir" notu düştüm. İstemezsen bu grubu hiç commit'lemeyebilirsin, diğer ikisi ondan bağımsız.
+
+Grup 2 — Yinelenen tespiti (5 dosya)
+
+Models/DuplicateGroup.cs (yeni) — API'nin döndüğü şeklin sınıfı. Hash, SizeBytes, Count, WastedBytes, Files.
+
+Data/AppDbContext.cs — OnModelCreating metodu eklendi, Hash kolonuna index tanımlanıyor. Daha önce bu metot hiç yoktu; base.OnModelCreating(modelBuilder) çağrısını koydum ki ileride EF'in kendi yapılandırması ezilmesin.
+
+Migrations/…AddHashIndex.cs (yeni) + AppDbContextModelSnapshot.cs (2 satır) — index'in veritabanına yansıması. Migration'ın içi sadece CreateIndex/DropIndex; hiçbir veri değişmiyor, kolon eklenmiyor. dotnet ef database update çalıştırıldı, uygulandı.
+
+Services/IFileTrackingService.cs — tek satır, GetDuplicatesAsync() sözleşmeye eklendi.
+
+Services/FileTrackingService.cs — asıl iş burada, 43 satır. Üç aşamalı:
+
+// 1. Sadece yinelenen HASH DEĞERLERİNİ bul (satırları değil)
+.Where(f => f.Hash != "").GroupBy(f => f.Hash).Where(g => g.Count() > 1).Select(g => g.Key)
+Bu SQL'e GROUP BY Hash HAVING COUNT(*) > 1 olarak çevriliyor. Veritabanı sadece hash listesi döndürüyor, satırları değil.
+
+// 2. Sadece o hash'lere ait satırları çek
+.Where(f => duplicateHashes.Contains(f.Hash))
+SQL IN olarak çevriliyor. Tek sorgu — her hash için ayrı sorgu atılmıyor (N+1 yok).
+
+// 3. Bellekte grupla
+Bu aşama bellekte ama elde zaten sadece yinelenen kayıtlar var, tüm tablo değil.
+
+Neden iki sorgu, tek sorgu değil? EF Core, GroupBy sonucunda tam entity koleksiyonu isteyen sorguları SQL'e çeviremez — ya istemcide değerlendirir (tüm tabloyu belleğe çeker) ya da hata verir. İki sorgulu desen bunun standart çözümü.
+
+Controllers/FilesController.cs — 12 satır, GET /api/files/duplicates. Rota çakışması yok: ASP.NET Core'da sabit metinli segmentler (duplicates) parametreli olanlara ({id}) göre öncelikli. Zaten var olan search endpoint'i bunu ispatlıyor.
+
+Grup 3 — YasananSorunlar.md (117 satır)
+
+"Sorun 4" bölümü. Belirti (hash yazılıyor, kimse okumuyor) → kök neden (karşılaştırılmıyor + tüketici yok) → çözüm → bilinçli kapsam dışı (boyut+tarih aynı kalıp içerik değişen senaryo, neden kapatmadığımız) → doğrulama tablosu → ders.
+
+---
+Dikkatini çekmek istediğim üç şey
+
+1. Veritabanında 3 artık kayıt var. Test için kopya-a.txt, kopya-b.txt, tekil-c.txt oluşturdum, doğruladım, sonra dosyaları sildim — ama tarayıcı diskten silinen dosyaların kayıtlarını veritabanından temizlemiyor. Yani dosyatakip.db içinde artık var olmayan 3 dosyanın satırı duruyor. .db git'e girmiyor, commit'i etkilemez ama GET /api/files çıktısında görünürler. Temizlemek istersen:
+
+dotnet ef database drop --force
+dotnet ef database update
+
+Bu arada bu, projede daha önce konuşmadığımız gerçek bir boşluk: silinen dosyalar veritabanında sonsuza kadar kalıyor. Ayrı bir iş, şimdi açmayalım ama not edeyim.
+
+2. Git satır sonu uyarıları göreceksin (LF will be replaced by CRLF). Benim yazdığım dosyalar LF ile kaydedildi, git bunları Windows standardına çeviriyor. Zararsız, commit düzgün olur.
+
+3. \ No newline at end of file işareti AppDbContext.cs ve FileTrackingService.cs diff'lerinde görünüyor — bu önceden de vardı, benim eklediğim bir şey değil.
+
+Bir şeyi değiştirmemi ister misin, yoksa commit'lere geçelim mi?

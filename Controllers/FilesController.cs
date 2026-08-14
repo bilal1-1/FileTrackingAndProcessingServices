@@ -44,6 +44,18 @@ namespace FileTrackingAndProcessingServices.Controllers
             return Ok(file);
         }
 
+        /// <summary>
+        /// İçeriği birebir aynı olan dosyaları hash'e göre gruplayıp döner.
+        /// Rota, "{id}" kalıbından önce eşleşir: ASP.NET Core yönlendirmesinde
+        /// sabit metinli segmentler parametreli olanlara göre önceliklidir.
+        /// </summary>
+        [HttpGet("duplicates")]
+        public async Task<IActionResult> GetDuplicates()
+        {
+            var groups = await _fileService.GetDuplicatesAsync();
+            return Ok(groups);
+        }
+
         [HttpGet("search")]
         public async Task<IActionResult> Search([FromQuery] string extension)
         {

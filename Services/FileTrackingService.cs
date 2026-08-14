@@ -76,5 +76,48 @@ namespace FileTrackingAndProcessingServices.Services
                 .Where(f => f.Extension == extension)
                 .ToListAsync();
         }
+
+        public async Task<List<DuplicateGroup>> GetDuplicatesAsync()
+        {
+            // 1. Önce sadece yinelenen hash değerlerini bul. Gruplama ve sayma
+            //    veritabanında yapılır (GROUP BY ... HAVING COUNT(*) > 1), satırlar
+            //    belleğe çekilmez.
+            //    Hash'i boş olan kayıtlar dışarıda bırakılır — henüz hesaplanmamış
+            //    olmaları onları birbirinin kopyası yapmaz.
+            var duplicateHashes = await _context.TrackedFiles
+                .Where(f => f.Hash != "")
+                .GroupBy(f => f.Hash)
+                .Where(g => g.Count() > 1)
+                .Select(g => g.Key)
+                .ToListAsync();
+
+            if (duplicateHashes.Count == 0)
+            {
+                return new List<DuplicateGroup>();
+            }
+
+            // 2. Sadece bu hash'lere ait satırları çek. Tek sorgu (SQL IN), N+1 yok.
+            var files = await _context.TrackedFiles
+                .Where(f => duplicateHashes.Contains(f.Hash))
+                .ToListAsync();
+
+            // 3. Gruplara ayır. Bu aşama bellekte — elde zaten sadece yinelenen
+            //    kayıtlar var, tüm tablo değil.
+            return files
+                .GroupBy(f => f.Hash)
+                .Select(g => new DuplicateGroup
+                {
+                    Hash = g.Key,
+                    SizeBytes = g.First().SizeBytes,
+                    Count = g.Count(),
+                    WastedBytes = g.First().SizeBytes * (g.Count() - 1),
+                    Files = g.OrderBy(f => f.FilePath).ToList()
+                })
+                // En çok yer israf eden grup başta gelsin — listeye bakan kişi
+                // için en işe yarar sıralama bu.
+                .OrderByDescending(g => g.WastedBytes)
+                .ThenBy(g => g.Hash)
+                .ToList();
+        }
     }
 }
