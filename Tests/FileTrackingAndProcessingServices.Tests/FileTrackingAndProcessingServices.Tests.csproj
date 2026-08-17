@@ -9,15 +9,23 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
-
-    <!-- GEÇİCİ: Uygulama PostgreSQL'e geçti ve SQLite paketleri web projesinden
-         kaldırıldı, ama testler henüz bellek içi SQLite kullanıyor. Geçiş
-         tamamlanana kadar derlemenin ve testlerin bozulmaması için paketler
-         buraya taşındı. Testler Testcontainers'a alındığında ikisi de silinecek.
-         SQLitePCLRaw pin'i CVE-2025-6965 (NU1903) içindir. -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+
+    <!-- Sürüm hizalaması. Web projesi EntityFrameworkCore.Design 10.0.10
+         kullandığı için EF Core 10.0.10'a karşı derleniyor; Npgsql ise EF Core
+         10.0.4 getiriyor. Bu satır olmadan test projesi 10.0.4'te kalıyor ve
+         derleme CS1705 ile patlıyor: referans verilen derleme, projenin
+         derlendiğinden daha eski. Eskiden çakışma yoktu çünkü test projesindeki
+         SQLite paketi 10.0.10'u çekiyordu; o paket kaldırılınca ortaya çıktı. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.10" />
+
+    <!-- Testler gerçek bir PostgreSQL'e karşı koşuyor. Testcontainers, test
+         çalıştırıldığında Docker'da geçici bir postgres container'ı ayağa
+         kaldırıp bitince siler. SQLite paketleri kaldırıldı: uygulama
+         PostgreSQL'de çalışırken testlerin SQLite'ı doğrulaması, çalıştırılan
+         veritabanının test edilmemesi anlamına geliyordu.
+         DİKKAT: bu yüzden "dotnet test" için Docker çalışır durumda olmalı. -->
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>

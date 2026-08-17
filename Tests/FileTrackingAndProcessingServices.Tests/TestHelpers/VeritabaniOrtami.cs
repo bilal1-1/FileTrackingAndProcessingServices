@@ -1,43 +1,37 @@
 using FileTrackingAndProcessingServices.Data;
 using FileTrackingAndProcessingServices.Models;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace FileTrackingAndProcessingServices.Tests.TestHelpers
 {
     /// <summary>
-    /// Her test için sıfırdan, belleğe kurulmuş bir SQLite veritabanı hazırlar.
+    /// Tek bir teste ait, boş bir veritabanı ve taze bir DbContext verir.
     ///
     /// Neden sahte (mock) bir DbContext değil: servisteki sorgular LINQ olarak
-    /// yazılıyor ama SQL'e çevrilerek çalışıyor. Sahte bir nesneyle test edilirse
-    /// sorgular bellekte LINQ-to-Objects olarak koşar ve "SQL'e çevrilebiliyor mu"
-    /// sorusu hiç sorulmamış olur. Özellikle GetDuplicatesAsync'teki
-    /// GROUP BY ... HAVING COUNT(*) > 1 çevirisi ancak gerçek bir veritabanında
-    /// doğrulanabilir.
+    /// yazılıyor ama SQL'e çevrilerek çalışıyor. Sahte bir nesneyle test
+    /// edilirse sorgular bellekte LINQ-to-Objects olarak koşar ve "SQL'e
+    /// çevrilebiliyor mu" sorusu hiç sorulmamış olur.
     ///
-    /// Bellekteki veritabanı, bağlantı açık kaldığı sürece yaşar; Dispose ile
-    /// bağlantı kapandığında veri de yok olur. Testler birbirini etkilemez.
+    /// Neden SQLite değil de gerçek PostgreSQL: uygulama PostgreSQL'de
+    /// çalışıyor. Aynı LINQ sorgusu her veritabanı için FARKLI SQL'e çevrilir;
+    /// SQLite'a karşı koşan bir test, çalıştırılan veritabanını doğrulamış
+    /// olmaz. Fark teorik de değil — PostgreSQL metni dil kurallarına göre
+    /// sıralar (baştaki noktayı yok sayar, büyük/küçük harfi birincil düzeyde
+    /// ayırmaz), SQLite ise bayt değerine göre sıralar.
+    ///
+    /// İzolasyon container yeniden başlatılarak değil, tablo boşaltılarak
+    /// sağlanıyor: TRUNCATE milisaniyeler sürer, container açmak saniyeler.
+    /// RESTART IDENTITY olmadan Id sayacı testler arasında büyümeye devam eder
+    /// ve "ilk kaydın Id'si 1" gibi beklentiler kırılırdı.
     /// </summary>
     public sealed class VeritabaniOrtami : IDisposable
     {
-        private readonly SqliteConnection _connection;
-
         public AppDbContext Context { get; }
 
-        public VeritabaniOrtami()
+        public VeritabaniOrtami(PostgreSqlSunucusu sunucu)
         {
-            _connection = new SqliteConnection("DataSource=:memory:");
-            _connection.Open();
-
-            var options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseSqlite(_connection)
-                .Options;
-
-            Context = new AppDbContext(options);
-
-            // Migration'ları çalıştırmak yerine şemayı modelden kurar.
-            // Testin amacı migration geçmişi değil, servis davranışı.
-            Context.Database.EnsureCreated();
+            Context = sunucu.YeniContext();
+            Context.Database.ExecuteSqlRaw(@"TRUNCATE TABLE ""TrackedFiles"" RESTART IDENTITY");
         }
 
         /// <summary>
@@ -80,10 +74,9 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
             };
         }
 
-        public void Dispose()
-        {
-            Context.Dispose();
-            _connection.Dispose();
-        }
+        // Container'ı DEĞİL yalnızca bu testin bağlantısını kapatır; container
+        // koleksiyondaki tüm testler bitince PostgreSqlSunucusu tarafından
+        // kapatılır.
+        public void Dispose() => Context.Dispose();
     }
 }

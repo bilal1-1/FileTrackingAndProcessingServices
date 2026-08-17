@@ -5,18 +5,20 @@ using FileTrackingAndProcessingServices.Tests.TestHelpers;
 namespace FileTrackingAndProcessingServices.Tests.Services
 {
     /// <summary>
-    /// FileTrackingService'in sorgulama davranışı. Her test kendi veritabanıyla
-    /// başlar (xUnit her test için sınıfı yeniden oluşturur), bu yüzden testler
-    /// birbirinin verisini görmez.
+    /// FileTrackingService'in sorgulama davranışı. Her test boş bir tabloyla
+    /// başlar (xUnit her test için sınıfı yeniden oluşturur ve VeritabaniOrtami
+    /// tabloyu boşaltır), bu yüzden testler birbirinin verisini görmez.
+    /// Sorgular gerçek bir PostgreSQL'e karşı koşar.
     /// </summary>
+    [Collection(VeritabaniKoleksiyonu.Ad)]
     public class FileTrackingServiceTests : IDisposable
     {
         private readonly VeritabaniOrtami _ortam;
         private readonly FileTrackingService _service;
 
-        public FileTrackingServiceTests()
+        public FileTrackingServiceTests(PostgreSqlSunucusu sunucu)
         {
-            _ortam = new VeritabaniOrtami();
+            _ortam = new VeritabaniOrtami(sunucu);
             _service = new FileTrackingService(_ortam.Context);
         }
 

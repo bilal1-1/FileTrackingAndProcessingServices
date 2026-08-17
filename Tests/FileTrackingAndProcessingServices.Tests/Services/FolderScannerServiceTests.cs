@@ -9,17 +9,18 @@ namespace FileTrackingAndProcessingServices.Tests.Services
 {
     /// <summary>
     /// FolderScannerService'in tarama davranışı: yeni dosya algılama, tekrar
-    /// kontrolü ve hash karşılaştırması. Gerçek bir geçici klasör ve bellek içi
-    /// bir veritabanı kullanılıyor.
+    /// kontrolü ve hash karşılaştırması. Gerçek bir geçici klasör ve gerçek bir
+    /// PostgreSQL kullanılıyor.
     /// </summary>
+    [Collection(VeritabaniKoleksiyonu.Ad)]
     public class FolderScannerServiceTests : IDisposable
     {
         private readonly VeritabaniOrtami _ortam;
         private readonly GeciciKlasor _klasor;
 
-        public FolderScannerServiceTests()
+        public FolderScannerServiceTests(PostgreSqlSunucusu sunucu)
         {
-            _ortam = new VeritabaniOrtami();
+            _ortam = new VeritabaniOrtami(sunucu);
             _klasor = new GeciciKlasor();
         }
 
