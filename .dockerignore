@@ -7,11 +7,17 @@
 **/bin/
 **/obj/
 
-# Yereldeki veritabanı. Gönderilirse imajın içine test kayıtlarıyla birlikte
-# hazır bir veritabanı gömülür — container her açılışta o eski veriyle başlar.
+# SQLite döneminden kalan yerel veritabanı dosyaları. Uygulama artık PostgreSQL
+# kullanıyor ve verisini ayrı bir container'ın volume'ünde tutuyor, ama bu
+# dosyalar proje klasöründe duruyor olabilir; imaja sızmalarına gerek yok.
 *.db
 *.db-wal
 *.db-shm
+
+# İzlenen klasör. İçeriği çalışma anında host'tan bağlanıyor (docker-compose.yml
+# içindeki :ro mount), imaja gömülmemeli — aksi halde container her açılışta
+# imajdaki eski kopyayı da taşırdı.
+izlenen/
 
 # Testler container'da çalışmıyor, imajda yer kaplamalarına gerek yok.
 Tests/

@@ -438,6 +438,242 @@ Bu, testlerin gerçekten bu düzeltmeyi koruduğunu gösteriyor: kod eski haline
 
 ---
 
+## Sorun 6: SQLite'tan PostgreSQL'e Geçişte Ortaya Çıkan Beş Sorun
+
+### Belirti
+
+Geçiş, başlarken "bağlantı dizesini değiştir, bitti" gibi görünüyordu. Gerçekte
+tek satırlık bir iş değildi: `Microsoft.EntityFrameworkCore.Sqlite` yerine
+`Npgsql.EntityFrameworkCore.PostgreSQL` konup `UseSqlite` → `UseNpgsql`
+yapıldığında art arda beş ayrı sorun çıktı. Hepsinin ortak kökeni aynı:
+**SQLite ile PostgreSQL yalnızca "aynı işi yapan iki veritabanı" değil, farklı
+mimarilere sahip iki ayrı sistem.** SQLite uygulamanın içinde çalışan bir
+kütüphane ve tek bir dosya; PostgreSQL ise ayrı bir sunucu süreci.
+
+Not: geçiş bir performans darboğazı için yapılmadı — bu ölçekte SQLite
+fazlasıyla yeterliydi. Gerekçe gerçekçilik ve öğrenmeydi; bu bilinçli olarak
+kabul edildi.
+
+---
+
+### 6.1 — Npgsql yerel saatli tarihleri reddediyor
+
+**Belirti.** `FolderScannerService` diske ilk kaydı yazmaya çalıştığında
+PostgreSQL tarafı değeri kabul etmiyor.
+
+**Kök neden.** Tarayıcı tarihleri şöyle okuyordu:
+
+```csharp
+CreatedAt = file.CreationTime,
+ModifiedAt = file.LastWriteTime
+```
+
+Bu özellikler **yerel saatli** (`Kind = Local`) bir `DateTime` döndürür. Npgsql
+`DateTime` tipini PostgreSQL'in `timestamp with time zone` kolonuna eşler ve bu
+kolona yerel saatli bir değer yazılmasına izin vermez. Dahası `Kind` değeri
+`Unspecified` olan bir değer de reddedilir — yani testlerdeki
+`new DateTime(2026, 1, 1)` bile geçersizdir.
+
+SQLite bu sorunu hiç göstermiyordu çünkü tarihi metin olarak saklıyor ve ne
+yazıldığını sorgulamıyor. Hata veritabanının değişmesiyle ortaya çıktı; kod
+zaten baştan beri saat dilimi bilgisi olmayan bir değer yazıyordu.
+
+**Çözüm.** Tarihler UTC olarak saklanıyor:
+
+```csharp
+CreatedAt = file.CreationTimeUtc,
+ModifiedAt = file.LastWriteTimeUtc
+```
+
+Karşılaştırma satırı da (`existing.ModifiedAt != file.LastWriteTimeUtc`) aynı uca
+çevrildi — biri UTC diğeri yerel kalsaydı her taramada saat farkı kadar sahte
+"değişmiş" tespiti üretirdi.
+
+**Elenen alternatif:** kolonu `timestamp without time zone` yapmak. Kod hiç
+değişmezdi ve yerel saatler aynen saklanırdı, ama saat dilimi bilgisi kaybolur.
+UTC saklamak tercih edildi: sunucunun saat dilimi değişse ya da uygulama başka
+bir bölgede çalışsa bile kayıtlı an aynı kalır.
+
+**Bedeli bilinçli kabul edildi:** API artık yerel saate göre 3 saat geride
+görünen tarihler döndürüyor.
+
+---
+
+### 6.2 — Migration'lar sağlayıcıya özeldir
+
+**Belirti.** Mevcut dört migration (`InitialCreate`,
+`AddFilePathToTrackedFile`, `AddHashToTrackedFile`, `AddHashIndex`) PostgreSQL
+üzerinde çalışmıyor.
+
+**Kök neden.** Migration dosyaları veritabanından bağımsız görünse de,
+uygulanırken **sağlayıcıya özel SQL üretirler**. SQLite için üretilmiş kod
+(`Sqlite:Autoincrement` gibi ek bilgiler dahil) PostgreSQL'de geçerli değildir.
+
+**Çözüm.** Dört migration ve model anlık görüntüsü silinip tek bir
+`InitialCreate` yeniden üretildi. Veri taşıma yapılmadı — ödev ölçeğinde sıfırdan
+başlamak yeterli. Üretilen şema PostgreSQL tiplerini kullanıyor:
+
+| Kolon | SQLite | PostgreSQL |
+|---|---|---|
+| `Id` | `INTEGER` + AUTOINCREMENT | `integer` + identity |
+| metin alanları | `TEXT` | `text` |
+| `SizeBytes` | `INTEGER` | `bigint` |
+| `CreatedAt` / `ModifiedAt` | `TEXT` | `timestamp with time zone` |
+
+Son satır, 6.1'deki sorunun neden kaçınılmaz olduğunu da açıklıyor.
+
+---
+
+### 6.3 — Testler artık çalıştırılmayan bir veritabanını doğruluyordu
+
+**Belirti.** Uygulama PostgreSQL'e geçtikten sonra 71 test yeşil yanmaya devam
+etti. Sorun tam da buydu: testler hâlâ bellek içi **SQLite**'a karşı koşuyordu.
+
+**Kök neden.** Aynı LINQ sorgusu her veritabanı için farklı SQL'e çevrilir.
+SQLite'a karşı geçen bir test, üretimde çalışan veritabanı hakkında hiçbir şey
+söylemez. Fark teorik de değildi — geçiş sırasında canlı olarak görüldü.
+`sortBy=fileName&sortOrder=desc` PostgreSQL'de şunu döndürdü:
+
+```
+YasananSorunlar.md, Program.cs, .gitignore, FileTrackingAndProcessingServices.csproj
+```
+
+`.gitignore` neden `F`'den önce geliyor? Çünkü PostgreSQL'in varsayılan
+collation'ı metni **dil kurallarına göre** sıralar: baştaki noktayı yok sayar ve
+büyük/küçük harfi birincil düzeyde ayırmaz, yani `gitignore` olarak değerlendirir
+(`Y > P > g > F`). SQLite ise metni **bayt değerine** göre sıralar ve `.gitignore`
+bambaşka bir yere düşerdi. Sıralama iddiası eden bir test, ikisinde farklı sonuç
+verebilir.
+
+**Çözüm.** Testler `Testcontainers.PostgreSql` ile gerçek PostgreSQL'e taşındı.
+Üç tasarım kararı:
+
+1. **Tek container, tüm testler için.** Container açmak saniyeler sürer; 71 test
+   için ayrı ayrı açmak süreyi dakikalara çıkarırdı. `PostgreSqlSunucusu` bir
+   koleksiyon fixture'ı olarak container'ı bir kez açar.
+2. **İzolasyon `TRUNCATE TABLE "TrackedFiles" RESTART IDENTITY` ile.**
+   Milisaniyeler sürer. `RESTART IDENTITY` olmadan `Id` sayacı testler arasında
+   büyümeye devam eder ve "ilk kaydın Id'si 1" gibi beklentiler kırılırdı.
+3. **Şema `Database.Migrate()` ile kuruluyor, `EnsureCreated()` ile değil.**
+   Bu, `Program.cs`'in açılışta yaptığının aynısı; böylece migration'ın
+   çalışabilir bir şema ürettiği de her test koşusunda doğrulanmış olur.
+   (SQLite döneminde `EnsureCreated()` kullanılıyordu; gerekçe "testin amacı
+   migration geçmişi değil" idi. Gerçek veritabanına geçilince migration'ı da
+   doğrulamak bedava geldiği için bu karar değişti.)
+
+Test sınıfları tek bir koleksiyonda toplandı. Bu hem container'ı paylaştırıyor
+hem de **paralel koşmayı engelliyor** — paralel koşsalardı ortak tabloyu
+birbirlerinden silerlerdi.
+
+**Bedeli bilinçli kabul edildi:** `dotnet test` artık Docker'ın çalışıyor
+olmasını gerektiriyor ve süre ~1 saniyeden ~5 saniyeye çıktı.
+
+---
+
+### 6.4 — Gizlenmiş EF Core sürüm çakışması (CS1705)
+
+**Belirti.** SQLite paketleri test projesinden kaldırılınca derleme patladı:
+
+```
+error CS1705: Assembly 'FileTrackingAndProcessingServices' uses
+'Microsoft.EntityFrameworkCore, Version=10.0.10.0' which has a higher version
+than referenced assembly 'Microsoft.EntityFrameworkCore, Version=10.0.4.0'
+```
+
+**Kök neden.** Web projesi `Microsoft.EntityFrameworkCore.Design` 10.0.10
+kullandığı için EF Core **10.0.10**'a karşı derleniyor. Npgsql ise EF Core
+**10.0.4** getiriyor. Test projesi, `Design` paketinin `PrivateAssets=all`
+olması nedeniyle 10.0.10'u miras almıyor ve 10.0.4'te kalıyor — yani daha eski
+bir derlemeye karşı, daha yeni bir derlemeyle derlenmiş projeyi kullanmaya
+çalışıyor.
+
+Bu çakışma aslında baştan beri vardı; görünmemesinin sebebi test projesindeki
+`Microsoft.EntityFrameworkCore.Sqlite` 10.0.10 paketinin sürümü yukarı
+çekmesiydi. Paket kaldırılınca dayanak da kalktı.
+
+**Çözüm.** Test projesine `Microsoft.EntityFrameworkCore.Relational` 10.0.10
+açıkça eklendi (EF Core 10.0.10'u da beraberinde getirir).
+
+---
+
+### 6.5 — Container kurulumu tek servisten iki servise çıktı
+
+**Belirti.** SQLite döneminde tek container yetiyordu. PostgreSQL ayrı bir sunucu
+süreci olduğu için artık iki container gerekiyor ve aralarında bir **zamanlama
+sorunu** var: uygulama `Program.cs` içinde açılışta `Database.Migrate()`
+çağırıyor, o an veritabanı hazır değilse uygulama patlayarak kapanır.
+
+**Kök neden.** Bir PostgreSQL container'ının "başlamış" olması "bağlantı kabul
+ediyor" demek değildir; arada veri klasörünü hazırladığı birkaç saniye vardır.
+Docker'ın `depends_on` ifadesi yalnızca **başlatma sırasını** garanti eder,
+hazır olmayı değil.
+
+**Çözüm.** `docker-compose.yml`'de `db` servisine `pg_isready` tabanlı bir
+sağlık kontrolü tanımlandı, `api` servisi de `condition: service_healthy` ile
+bekletildi. Ek olarak `UseNpgsql(..., npgsql => npgsql.EnableRetryOnFailure())`
+ile geçici bağlantı hatalarında sorgular kendiliğinden yeniden deneniyor.
+
+Yan düzenlemeler:
+
+- Bağlantı dizesi **bilinçli olarak Dockerfile'a yazılmadı** — şifre imaja
+  gömülmesin ve `Host=db` bilgisini veritabanının servis adını bilen taraf
+  (compose) versin diye. `localhost` yazmak container'ın kendi içini işaret eder
+  ve geçişte en sık yapılan hatadır.
+- SQLite dosyası için açılan `/app/data` klasörü kaldırıldı; veri artık `pgdata`
+  isimli volume'de.
+- İzlenen klasör `:ro` (salt okunur) bağlanıyor — tarayıcı dosyaları yalnızca
+  okuyup hash'liyor.
+
+**Ek olarak çıkan küçük bir gürültü.** Uygulama açılışında log'a şu düşüyordu:
+
+```
+Cannot load library libgssapi_krb5.so.2
+Error: libgssapi_krb5.so.2: cannot open shared object file
+```
+
+Npgsql açılışta Kerberos/GSSAPI desteğini yokluyor; `aspnet:10.0` slim imajında
+o kitaplık yok. **Ölümcül değil** — bağlantı şifreyle kurulur ve uygulama
+sorunsuz çalışır — ama her açılışta hata gibi görünen bir satır bırakıyordu.
+Runtime aşamasına `libgssapi-krb5-2` eklenerek kaynağında giderildi.
+
+---
+
+### Doğrulama
+
+Geçiş, gerçek bir kurulum üzerinde uçtan uca doğrulandı:
+
+| Kontrol | Sonuç |
+|---|---|
+| Sağlık kontrolü kapısı | `db Waiting → Healthy → api Starting` ✔ |
+| Migration açılışta uygulanıyor | ✔ |
+| Tarama (salt okunur mount) | 4 dosya ✔ |
+| `search?extension=.txt` | `BELGE.TXT` dahil 3 kayıt ✔ |
+| `duplicates` | 2 dosya, farklı isim, aynı hash ✔ |
+| Swagger | HTTP 200 ✔ |
+| `down` + `up` sonrası veri | Id'ler korundu, satır çoğalmadı ✔ |
+| Uygulama log'unda hata/uyarı | yok ✔ |
+| İmaj boyutu | 411 MB → 365 MB |
+| Birim testler (gerçek PostgreSQL) | 71/71 ✔ |
+
+### Ders
+
+**Bir bağımlılığı değiştirmek, onu kullanan kodun varsayımlarını da açığa
+çıkarır.** Kod baştan beri saat dilimi olmayan tarihler yazıyordu (6.1) ve EF
+Core sürümleri baştan beri çakışıyordu (6.4); ikisi de SQLite ortamı hoşgörülü
+olduğu için görünmüyordu. Yeni sistem daha katı olduğu için hatayı o yaratmadı,
+sadece görünür kıldı.
+
+**İkinci ders — testler, test ettikleri şeyle aynı ortamda koşmalıdır.** 71 test
+geçiyor olması, uygulama PostgreSQL'de koşarken testler SQLite'ta koştuğu sürece
+bir şey ifade etmiyordu. Yeşil testler yanlış bir güven duygusu verebilir:
+önemli olan kaç testin geçtiği değil, **neyi doğruladıkları**.
+
+**Üçüncü ders — "başladı" ile "hazır" aynı şey değildir.** Dağıtık kurulumlarda
+bir servisin ayakta olması iş görmeye hazır olduğu anlamına gelmez (6.5); sıra
+garantisi yeterli değildir, hazır olma açıkça ölçülmelidir.
+
+---
+
 ## Açık Konu: Silinen Dosyalar Veritabanında Kalıyor
 
 **Durum: çözüm aranacak. Henüz uygulanmadı.**
