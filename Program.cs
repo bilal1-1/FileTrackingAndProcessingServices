@@ -14,8 +14,13 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Bizim DI kayıtlarımız
+// PostgreSQL ayrı bir sunucu süreci; SQLite gibi "dosyayı aç, hazır" değil.
+// Uygulama ondan önce ayağa kalkabilir ya da veritabanı anlık kopabilir, bu yüzden
+// geçici bağlantı hatalarında sorgunun kendiliğinden yeniden denenmesi isteniyor.
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        npgsql => npgsql.EnableRetryOnFailure()));
 
 builder.Services.AddScoped<IFileTrackingService, FileTrackingService>();
 builder.Services.AddScoped<IFolderScannerService, FolderScannerService>();
@@ -28,8 +33,8 @@ var app = builder.Build();
 
 // Bekleyen migration'ları uygulama açılırken çalıştır.
 // Container içinde "dotnet ef database update" komutunu çalıştırma imkânı yok
-// (runtime imajında EF araçları bulunmaz); bu satır olmadan veritabanı hiç
-// oluşmaz ve ilk sorguda "no such table: TrackedFiles" hatası alınır.
+// (runtime imajında EF araçları bulunmaz); bu satır olmadan tablolar hiç
+// oluşmaz ve ilk sorguda relation TrackedFiles does not exist hatası alınır.
 // Yerelde de zararsız: veritabanı zaten günceldeyse hiçbir şey yapmaz.
 using (var scope = app.Services.CreateScope())
 {

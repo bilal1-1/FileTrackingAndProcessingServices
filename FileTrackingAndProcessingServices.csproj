@@ -23,14 +23,12 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
 
-    <!-- EF Core Sqlite, SQLitePCLRaw 2.1.11'i getiriyor; o sürümdeki yerel SQLite
-         kitaplığı CVE-2025-6965'ten etkileniyor (NU1903). Alt bağımlılığı doğrudan
-         referansla 2.1.12'ye sabitliyoruz. EF Core sürümü yükseldiğinde bu satır
-         gereksizleşirse kaldırılabilir. -->
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+    <!-- SQLite'tan PostgreSQL'e geçildi. Microsoft.EntityFrameworkCore.Sqlite ile
+         birlikte SQLitePCLRaw pin'i de kaldırıldı: o pin yalnızca SQLite'ın yerel
+         kitaplığındaki CVE-2025-6965 için vardı, artık o bağımlılık yok. -->
   </ItemGroup>
 
 </Project>
