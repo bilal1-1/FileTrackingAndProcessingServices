@@ -1,0 +1,93 @@
+# ============================================================================
+# İki servisli kurulum: uygulama + PostgreSQL
+#
+# SQLite döneminde tek container yeterliydi, çünkü veritabanı uygulamanın
+# içinde çalışan bir kütüphane ve tek bir dosyaydı. PostgreSQL ise AYRI BİR
+# SUNUCU SÜRECİ; kendi container'ında çalışır ve uygulama ona ağ üzerinden
+# bağlanır. Bu dosya o iki container'ı birlikte ayağa kaldırıyor.
+#
+# Çalıştırma:  docker compose up --build
+# Durdurma:    docker compose down            (veri kalır)
+# Sıfırlama:   docker compose down -v         (veri de silinir)
+# ============================================================================
+
+services:
+
+  # --------------------------------------------------------------------------
+  # Veritabanı
+  # --------------------------------------------------------------------------
+  db:
+    image: postgres:17
+
+    # POSTGRES_* değişkenleri yalnızca veri klasörü BOŞKEN, yani ilk açılışta
+    # dikkate alınır. Volume bir kez oluştuktan sonra şifreyi buradan
+    # değiştirmek işe yaramaz; "docker compose down -v" ile sıfırlamak gerekir.
+    environment:
+      POSTGRES_DB: dosyatakip
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+    # Veri, container'ın içinde değil isimli bir volume'de tutuluyor.
+    # Böylece container silinip yeniden kurulduğunda kayıtlar yerinde kalır.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+    # Portu host'a açmak uygulamanın çalışması için GEREKLİ DEĞİL: iki container
+    # aynı ağda olduğu için birbirlerine servis adıyla ulaşırlar. Bu satır
+    # yalnızca host'tan psql/pgAdmin ile bağlanıp veriye bakabilmek için var.
+    # Makinede kurulu bir PostgreSQL varsa 5432 çakışır; sol taraftaki numarayı
+    # değiştirmek (ör. 5433:5432) yeterlidir.
+    ports:
+      - "5432:5432"
+
+    # Sağlık kontrolü bu kurulumun kilit parçası. PostgreSQL container'ı
+    # "başladı" demek "bağlantı kabul ediyor" demek DEĞİLDİR; arada veri
+    # klasörünü hazırladığı birkaç saniye vardır. Uygulama Program.cs içinde
+    # açılışta Database.Migrate() çağırdığı için o anda veritabanı hazır
+    # olmazsa uygulama patlayarak kapanır. pg_isready hazır olma anını bildirir.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dosyatakip"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # --------------------------------------------------------------------------
+  # Uygulama
+  # --------------------------------------------------------------------------
+  api:
+    build: .
+
+    # Sadece "depends_on: [db]" yazmak SIRAYI garanti eder ama HAZIR OLMAYI
+    # garanti etmez — Docker container başlar başlamaz sıradakine geçer.
+    # service_healthy koşulu, yukarıdaki healthcheck geçene kadar bekletir.
+    depends_on:
+      db:
+        condition: service_healthy
+
+    environment:
+      # Host=db → compose, servis adlarını container ağında birer isim olarak
+      # çözer. "localhost" yazmak container'ın kendi içini işaret eder ve orada
+      # PostgreSQL yoktur; geçişte en sık yapılan hata bu.
+      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=dosyatakip;Username=postgres;Password=postgres"
+
+      # İzlenen klasör. appsettings.json'daki değer bir Windows yolu ve Linux
+      # container içinde hiçbir anlam ifade etmiyor.
+      WatchSettings__FolderPath: /data/watch
+      WatchSettings__ScanIntervalSeconds: "10"
+
+      # Swagger Program.cs'te yalnızca Development ortamında açılıyor. Bu bir
+      # ödev/demo tercihi; gerçek dağıtımda Production'da kalınır.
+      ASPNETCORE_ENVIRONMENT: Development
+
+    ports:
+      - "8080:8080"
+
+    # Taranacak klasör host'tan bağlanıyor. ":ro" salt okunur demek — tarayıcı
+    # dosyaları yalnızca okuyup hash'liyor, hiçbirine yazmıyor. İzni okumayla
+    # sınırlamak, bir hata durumunda izlenen dosyaların değişmesini engeller.
+    volumes:
+      - ./izlenen:/data/watch:ro
+
+volumes:
+  pgdata:

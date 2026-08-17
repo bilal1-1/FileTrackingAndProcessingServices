@@ -29,17 +29,30 @@ RUN dotnet publish FileTrackingAndProcessingServices.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
+# Npgsql açılışta Kerberos/GSSAPI desteğini yokluyor. Bu slim Debian imajında
+# libgssapi_krb5.so.2 bulunmadığı için log'a şu satırlar düşüyordu:
+#   Cannot load library libgssapi_krb5.so.2
+#   Error: libgssapi_krb5.so.2: cannot open shared object file
+# Ölümcül DEĞİL — bağlantı şifreyle kurulur ve uygulama sorunsuz çalışır — ama
+# her açılışta hata gibi görünen bir satır bırakır. Kitaplığı eklemek gürültüyü
+# kaynağında bitiriyor. apt listeleri aynı katmanda siliniyor, yoksa indirilen
+# paket bilgisi imajda kalıcı yer kaplar.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Derleme aşamasından yalnızca yayın çıktısı alınır; kaynak kod, NuGet önbelleği
 # ve SDK son imaja hiç girmez.
 COPY --from=build /app/publish ./
 
-# İki ayrı klasör:
-#   /app/data   → SQLite veritabanı burada durur
-#   /data/watch → izlenen klasör; host'tan buraya bağlama (volume) yapılır
+# /data/watch → izlenen klasör; host'tan buraya bağlama (volume) yapılır.
+# Eskiden bir /app/data klasörü de vardı: SQLite veritabanı dosyası orada
+# duruyordu. PostgreSQL'e geçildiğinde veri artık ayrı bir container'ın
+# yönettiği isimli volume'de tutulduğu için o klasör gereksizleşti.
 # APP_UID, .NET imajlarının tanımladığı root olmayan kullanıcının kimliği.
-# Klasörlerin sahipliği ona verilmezse uygulama yazma izni bulamaz.
-RUN mkdir -p /app/data /data/watch \
-    && chown -R $APP_UID:$APP_UID /app/data /data/watch
+# Klasörün sahipliği ona verilmezse uygulama erişim izni bulamaz.
+RUN mkdir -p /data/watch \
+    && chown -R $APP_UID:$APP_UID /data/watch
 
 # --- Yapılandırma ---
 # appsettings.json'daki değerler container'a uymuyor; ortam değişkenleriyle
@@ -50,10 +63,12 @@ RUN mkdir -p /app/data /data/watch \
 # (C:\Users\...) ve Linux container içinde hiçbir anlam ifade etmez.
 ENV WatchSettings__FolderPath=/data/watch
 
-# Veritabanının yeri. Varsayılan "Data Source=dosyatakip.db" çalışma dizinine
-# göreli olduğu için container silindiğinde veri de giderdi. /app/data'ya
-# alınıp oraya volume bağlanabilir hale getiriliyor.
-ENV ConnectionStrings__DefaultConnection="Data Source=/app/data/dosyatakip.db"
+# Veritabanı bağlantısı bilinçli olarak BURAYA YAZILMIYOR. appsettings.json'daki
+# değer "Host=localhost" diyor; localhost container'ın kendi içi demektir ve orada
+# PostgreSQL yok. Doğru adres (Host=db) docker-compose.yml tarafından veriliyor,
+# çünkü veritabanının servis adını bilen taraf orası. Şifre de imaja gömülmemiş
+# olur. Bu imajı compose olmadan tek başına çalıştıracaksan bağlantı dizesini
+# "docker run -e ConnectionStrings__DefaultConnection=..." ile vermelisin.
 
 # Swagger arayüzü Program.cs'te yalnızca Development ortamında açılıyor.
 # Container varsayılan olarak Production'da başlar ve Swagger görünmezdi.
