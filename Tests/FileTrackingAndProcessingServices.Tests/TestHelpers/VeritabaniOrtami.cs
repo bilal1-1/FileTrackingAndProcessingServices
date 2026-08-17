@@ -72,8 +72,11 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
                 Extension = extension,
                 Hash = hash,
                 SizeBytes = sizeBytes,
-                CreatedAt = createdAt ?? new DateTime(2026, 1, 1),
-                ModifiedAt = modifiedAt ?? new DateTime(2026, 1, 1)
+                // DateTimeKind.Utc şart: PostgreSQL'in timestamp with time zone
+                // tipi yalnızca UTC kabul eder, Kind=Unspecified bir değer bile
+                // Npgsql tarafından reddedilir.
+                CreatedAt = createdAt ?? new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                ModifiedAt = modifiedAt ?? new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
             };
         }
 

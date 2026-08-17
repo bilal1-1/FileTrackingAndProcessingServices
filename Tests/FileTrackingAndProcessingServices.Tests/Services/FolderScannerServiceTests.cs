@@ -203,8 +203,10 @@ namespace FileTrackingAndProcessingServices.Tests.Services
             var eskiHash = (await _ortam.Context.TrackedFiles.SingleAsync()).Hash;
             _ortam.Context.ChangeTracker.Clear();
 
-            var yeniTarih = File.GetLastWriteTime(dosyaYolu).AddHours(5);
-            File.SetLastWriteTime(dosyaYolu, yeniTarih);
+            // Tarayıcı diske UTC yazıyor; test de UTC uçlarını kullanmalı, aksi
+            // halde karşılaştırma saat dilimi farkı kadar kayar.
+            var yeniTarih = File.GetLastWriteTimeUtc(dosyaYolu).AddHours(5);
+            File.SetLastWriteTimeUtc(dosyaYolu, yeniTarih);
 
             await Tarayici().ScanFolderAsync();
 
@@ -228,8 +230,8 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 Extension = dosyaBilgisi.Extension,
                 Hash = "",                                  // hash'siz eski kayıt
                 SizeBytes = dosyaBilgisi.Length,
-                CreatedAt = dosyaBilgisi.CreationTime,
-                ModifiedAt = dosyaBilgisi.LastWriteTime
+                CreatedAt = dosyaBilgisi.CreationTimeUtc,
+                ModifiedAt = dosyaBilgisi.LastWriteTimeUtc
             });
 
             int yeniSayisi = await Tarayici().ScanFolderAsync();

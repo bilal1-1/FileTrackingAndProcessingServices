@@ -35,6 +35,15 @@ namespace FileTrackingAndProcessingServices.Services
             var directoryInfo = new DirectoryInfo(_settings.FolderPath);
             var files = directoryInfo.GetFiles();
 
+            // NOT — tarihlerde neden hep ...Utc uçları kullanılıyor:
+            // CreationTime/LastWriteTime yerel saatli (Kind=Local) DateTime döndürür.
+            // Npgsql, DateTime'ı PostgreSQL'in "timestamp with time zone" tipine
+            // eşler ve bu tipe yerel saatli bir değer yazılmasına İZİN VERMEZ,
+            // doğrudan hata fırlatır. SQLite tarihi metin olarak sakladığı için
+            // hiç şikayet etmiyordu; sorun geçişle birlikte ortaya çıktı.
+            // Ayrıca UTC saklamak doğru pratik: sunucunun saat dilimi değişse ya da
+            // uygulama başka bir bölgede çalışsa bile kayıtlı an aynı kalır.
+
             // 3. Kayıtlı dosyaların tamamını tek sorguda çek.
             // Böylece döngü içinde her dosya için ayrı sorgu atılmaz (N+1 önlenir).
             var existingFiles = await _context.TrackedFiles
@@ -57,7 +66,7 @@ namespace FileTrackingAndProcessingServices.Services
                         // Bu kontrol, alanlar tazelenmeden ÖNCE yapılmalı.
                         bool hashGerekli = string.IsNullOrEmpty(existing.Hash)
                             || existing.SizeBytes != file.Length
-                            || existing.ModifiedAt != file.LastWriteTime;
+                            || existing.ModifiedAt != file.LastWriteTimeUtc;
 
                         if (hashGerekli)
                         {
@@ -86,7 +95,7 @@ namespace FileTrackingAndProcessingServices.Services
 
                         // Zaten işlenmiş — tekrar İŞLENMEZ, yeni satır açılmaz.
                         // Sadece diskteki güncel bilgisi tazelenir.
-                        existing.ModifiedAt = file.LastWriteTime;
+                        existing.ModifiedAt = file.LastWriteTimeUtc;
                         existing.SizeBytes = file.Length;
 
                         _logger.LogDebug("Dosya zaten kayıtlı, bilgisi güncellendi: {FileName}", file.Name);
@@ -101,8 +110,8 @@ namespace FileTrackingAndProcessingServices.Services
                         Extension = file.Extension,
                         SizeBytes = file.Length,
                         Hash = await ComputeHashAsync(file),
-                        CreatedAt = file.CreationTime,
-                        ModifiedAt = file.LastWriteTime
+                        CreatedAt = file.CreationTimeUtc,
+                        ModifiedAt = file.LastWriteTimeUtc
                     };
 
                     _context.TrackedFiles.Add(trackedFile);
