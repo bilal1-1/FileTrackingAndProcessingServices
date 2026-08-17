@@ -298,6 +298,54 @@ namespace FileTrackingAndProcessingServices.Tests.Services
             Assert.All(sonuc, f => Assert.Equal(".txt", f.Extension.ToLowerInvariant()));
         }
 
+        [Theory]
+        [InlineData("pdf")]     // ödev metnindeki yazım: search?extension=pdf
+        [InlineData(".pdf")]    // noktalı yazım
+        [InlineData("PDF")]     // noktasız ve büyük harf
+        [InlineData(" pdf ")]   // adres çubuğundan gelen boşluklar
+        public async Task Search_UzantiNoktasizYazilsaDaEslesir(string aranan)
+        {
+            // Tarayıcı uzantıyı FileInfo.Extension'dan alıyor ve o değer her zaman
+            // noktayla başlıyor (".pdf"). Kullanıcı ise doğal olarak "pdf" yazar.
+            // Nokta eklenmeseydi bu arama boş liste dönerdi — hata da vermeden,
+            // "böyle dosya yok" görüntüsünün arkasına saklanarak.
+            _ortam.Ekle(VeritabaniOrtami.Dosya("rapor", extension: ".pdf"));
+
+            var sonuc = await _service.SearchByExtensionAsync(aranan);
+
+            Assert.Single(sonuc);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("   ")]
+        public async Task Search_BosUzanti_BosListeDoner(string aranan)
+        {
+            // Boş arama çökmemeli. Hiçbir uzantı boş olmadığı için doğru cevap
+            // boş listedir; servis bu durumda veritabanına hiç gitmiyor.
+            _ortam.Ekle(VeritabaniOrtami.Dosya("rapor", extension: ".pdf"));
+
+            var sonuc = await _service.SearchByExtensionAsync(aranan);
+
+            Assert.Empty(sonuc);
+        }
+
+        [Fact]
+        public async Task Search_NoktasizArama_YanlisUzantilariGetirmez()
+        {
+            // Nokta eklemek eşleşmeyi gevşetmemeli: "pdf" araması ".pdf" bulmalı,
+            // ama ".pdfx" ya da uzantısı ".pd" olanları getirmemeli.
+            _ortam.Ekle(
+                VeritabaniOrtami.Dosya("a", extension: ".pdf"),
+                VeritabaniOrtami.Dosya("b", extension: ".pdfx"),
+                VeritabaniOrtami.Dosya("c", extension: ".pd"));
+
+            var sonuc = await _service.SearchByExtensionAsync("pdf");
+
+            Assert.Single(sonuc);
+            Assert.Equal(".pdf", sonuc[0].Extension);
+        }
+
         // ---------- GetDuplicatesAsync ----------
 
         [Fact]

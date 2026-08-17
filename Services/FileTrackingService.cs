@@ -72,22 +72,50 @@ namespace FileTrackingAndProcessingServices.Services
         
         public async Task<List<TrackedFile>> SearchByExtensionAsync(string extension)
         {
-            // Uzantı karşılaştırması büyük/küçük harf duyarsız olmalı: diskte
-            // "BELGE.TXT" varsa tarayıcı uzantıyı ".TXT" olarak kaydeder, kullanıcı
-            // ise ".txt" arar. Duyarlı karşılaştırma bu dosyayı hiç bulamıyordu.
-            //
-            // İki taraf da küçük harfe indiriliyor, ama farklı metotlarla:
-            // - Aranan değer C# tarafında ToLowerInvariant() ile küçültülür.
-            //   ToLower() kullanılsaydı makinenin kültürü devreye girerdi; Türkçe
-            //   kültürde ".TIF" -> ".tıf" olur ve veritabanındaki ".tif" ile
-            //   eşleşmezdi.
-            // - Kolon tarafındaki ToLower() SQL'e lower() olarak çevrilir ve
-            //   karşılaştırma veritabanında yapılır; tüm tablo belleğe çekilmez.
-            var aranan = extension.ToLowerInvariant();
+            var aranan = UzantiyiNormallestir(extension);
 
+            // Boş aramada veritabanına hiç gidilmiyor: hiçbir uzantı boş
+            // olmadığı için sorgu zaten kesin olarak boş dönerdi.
+            if (aranan.Length == 0)
+            {
+                return new List<TrackedFile>();
+            }
+
+            // Karşılaştırmanın kolon tarafındaki ToLower() SQL'e lower() olarak
+            // çevrilir; karşılaştırma veritabanında yapılır, tüm tablo belleğe
+            // çekilmez.
             return await _context.TrackedFiles
                 .Where(f => f.Extension.ToLower() == aranan)
                 .ToListAsync();
+        }
+
+        /// <summary>
+        /// Kullanıcının yazdığı uzantıyı, veritabanında saklanan biçime çevirir.
+        /// </summary>
+        private static string UzantiyiNormallestir(string extension)
+        {
+            // Küçük harfe indirme ToLowerInvariant() ile yapılıyor, ToLower() ile
+            // DEĞİL: ToLower() makinenin kültürünü kullanır ve Türkçe kültürde
+            // "I" harfinin küçüğü "ı"dır. ".TIF" -> ".tıf" olur, veritabanındaki
+            // kültür tanımayan lower() ise ".tif" üretir; noktalı ı ile noktasız i
+            // eşleşmez ve arama SADECE Türkçe makinelerde sessizce boş dönerdi.
+            //
+            // Büyük/küçük harf duyarsızlığı şart, çünkü diskte "BELGE.TXT" varsa
+            // tarayıcı uzantıyı ".TXT" olarak kaydeder ama kullanıcı ".txt" arar.
+            var aranan = (extension ?? string.Empty).Trim().ToLowerInvariant();
+
+            if (aranan.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            // Baştaki nokta yoksa ekleniyor. Tarayıcı uzantıyı FileInfo.Extension
+            // üzerinden alıyor ve o değer HER ZAMAN noktayla başlıyor (".pdf").
+            // Kullanıcı ise doğal olarak "pdf" yazar — ödev metnindeki örnek de
+            // (search?extension=pdf) noktasız. Bu satır olmadan "pdf" araması
+            // hiçbir şey bulamıyor ve üstelik hata da vermiyordu: sonuç boş liste
+            // olduğu için "böyle dosya yok" gibi görünüyordu.
+            return aranan.StartsWith('.') ? aranan : '.' + aranan;
         }
 
         public async Task<List<DuplicateGroup>> GetDuplicatesAsync()

@@ -56,9 +56,25 @@ namespace FileTrackingAndProcessingServices.Controllers
             return Ok(groups);
         }
 
+        /// <summary>
+        /// Uzantıya göre arama yapar. Uzantı noktalı da noktasız da yazılabilir:
+        /// "pdf" ile ".pdf" aynı sonucu döner, büyük/küçük harf de önemsizdir.
+        /// </summary>
         [HttpGet("search")]
-        public async Task<IActionResult> Search([FromQuery] string extension)
+        public async Task<IActionResult> Search([FromQuery] string? extension)
         {
+            // Parametre hiç verilmezse bağlayıcı null geçiriyordu ve arama
+            // sırasında NullReferenceException oluşup 500 dönüyordu. Eksik
+            // parametre bir sunucu hatası değil, istemci hatasıdır: 400 daha
+            // doğru ve mesaj kullanıcıya ne yapması gerektiğini söylüyor.
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                return BadRequest(new
+                {
+                    message = "extension parametresi zorunludur. Örnek: /api/files/search?extension=pdf"
+                });
+            }
+
             var files = await _fileService.SearchByExtensionAsync(extension);
             return Ok(files);
         }
