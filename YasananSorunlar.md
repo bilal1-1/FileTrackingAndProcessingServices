@@ -676,7 +676,8 @@ garantisi yeterli değildir, hazır olma açıkça ölçülmelidir.
 
 ## Açık Konu: Silinen Dosyalar Veritabanında Kalıyor
 
-**Durum: çözüm aranacak. Henüz uygulanmadı.**
+**Durum: yöntem kararlaştırıldı, henüz uygulanmadı.**
+**Seçilen yol: sayaçlı silme (hard delete).** Gerekçeler ve uygulama planı aşağıda.
 
 ### Belirti
 
@@ -692,24 +693,84 @@ Yinelenen tespiti bu boşluktan doğrudan etkileniyor. Silinmiş bir dosyanın k
 
 Ek bir tarama ya da ek sorgu gerekmiyor. `ScanFolderAsync` zaten taramanın başında tüm kayıtları tek sorguda `existingFiles` sözlüğüne alıyor. Döngüde diskte karşılaşılan her kayıt işaretlenirse, döngü bittiğinde sözlükte işaretsiz kalanlar tam olarak "diskte artık yok" olan kayıtlardır.
 
-### Düşünülen Yollar
+### Düşünülen Yollar ve Neden Sayaçlı Silme Seçildi
 
-| Yol | Nasıl | Bedeli |
-|-----|-------|--------|
-| Kaydı sil (hard delete) | Satır veritabanından uçar | En basit, mevcut endpoint'ler etkilenmez. Bilgi kalıcı kaybolur |
-| Silinmiş işaretle (soft delete) | `IsDeleted` + `DeletedAt` alanları | Tarihçe korunur, geri dönüşü var. Tüm sorgulara filtre eklemek gerekir |
-| Sayaçlı silme | Üst üste N taramada görülmezse sil | Geçici erişilemezliğe dayanıklı. Ek alan ve karmaşıklık |
+| Yol | Nasıl | Değerlendirme |
+|-----|-------|---------------|
+| Kaydı sil (hard delete) | Satır veritabanından uçar | En basit, mevcut endpoint'ler etkilenmez. **Ama tek bir başarısız taramada geri dönüşü olmayan toplu silme riski var** |
+| Silinmiş işaretle (soft delete) | `IsDeleted` + `DeletedAt` alanları | Tarihçe korunur, geri dönüşü var. **ELENDİ** — aşağıdaki maliyetleri bu ödev için orantısız bulundu |
+| **Sayaçlı silme** ✔ | Üst üste N taramada görülmezse sil | **SEÇİLDİ.** Geçici erişilemezliğe dayanıklı, otomatik, tarihçe tutmuyor |
 
-### Uygularken Dikkat Edilecek Üç Nokta
+**Soft delete neden elendi.** İki gizli maliyeti var:
 
-**1. Silme kapsamı taranan klasörle sınırlanmalı.** Tarama tek bir klasörü, alt klasörler hariç yapıyor (`GetFiles()`); ama `existingFiles` veritabanındaki *tüm* kayıtları çekiyor. `appsettings.json`'daki `FolderPath` bir gün değişirse, eski klasörün kayıtları "diskte yok" görünür ve haksız yere silinir.
+1. *Her sorguya filtre eklemek gerekir.* Birini unutmak sessiz hata üretir — en tehlikelisi `duplicates`, çünkü silinmiş dosyaları saymaya devam edip "şu kadar yer israf ediliyor" diye **yanlış bilgi** üretir. Çözümü EF Core'un global query filter'ı (`HasQueryFilter(f => !f.IsDeleted)`) ile tek satıra inebilirdi.
+2. *Ama o zaman tarayıcı da silinmiş kayıtları göremez.* Silinen bir dosya geri konulursa tarayıcı onu sözlükte bulamaz, "yeni dosya" sanıp aynı `FilePath` ile ikinci satır açar — yani Sorun 3'te çözülen hata geri gelir. Tarayıcının `IgnoreQueryFilters()` kullanması ve kaydı *diriltmesi* (`IsDeleted = false`) gerekirdi.
 
-**2. Klasör erişilemezken silme çalışmamalı.** Bu koruma şu an zaten var: `Directory.Exists` başarısızsa metot en başta `return 0` yapıyor, silme koduna hiç ulaşılmaz. Eklenecek kod bu davranışı bozmamalı.
+Bu proje bir klasörü izliyor ve "silinmiş dosyanın tarihçesi" bir gereksinim değil; iki ek mekanizmayı taşımaya değmedi.
 
-**3. `duplicates` sorgusu silinmişleri saymamalı.** Soft delete seçilirse filtre şart; yoksa yukarıdaki yanlış bilgi üretilmeye devam eder.
+**Sayaçlı silmenin asıl kazancı.** "Bir taramada görünmedi → sil" ile "üst üste N taramada görünmedi → sil" arasındaki fark kritik:
+
+```
+Ağ sürücüsü 30 saniye kopar (3 tarama kaçar)
+
+Tek taramada sil:   1. taramada bütün kayıtlar uçar. Geri dönüş yok.
+N taramada sil:     sayaç 1→2→3 olur, sürücü geri gelir,
+                    sayaç sıfırlanır, hiçbir şey silinmez. ✔
+```
+
+Aynı koruma tek dosya için de geçerli: bir dosya tarama anında başka bir program tarafından kilitliyse ya da yazılıyorsa, tek seferlik aksaklık kaydı uçurmaz. Mantık "acele etme, emin ol" — dosya gerçekten silinmişse kaydının ~100 saniye sonra düşmesi kimseyi rahatsız etmez, ama yanlışlıkla silinen kayıtlar geri gelmez.
+
+### Uygulama Planı
+
+**1. Model.** `TrackedFile`'a bir sayaç alanı eklenir (ör. `GorulmemeSayaci`, `int`, varsayılan 0). Migration gerekir.
+
+Alan `[JsonIgnore]` ile işaretlenmeli: `GET /api/files` doğrudan `TrackedFile` döndürdüğü için, aksi halde API çıktısına yeni bir alan sızar. Silme mekanizmasının API yüzeyinde **hiç görünmemesi** bilinçli bir tercih.
+
+**2. Ayar.** `appsettings.json` → `WatchSettings` altına eşik: `"SilmeIcinKacTarama": 10`. `ScanIntervalSeconds: 10` ile birlikte, dosya silindikten ~100 saniye sonra kaydı düşer. İkisi de ayardan değiştirilebilir.
+
+**3. Tarama döngüsü.**
+
+| Durum | Sayaç |
+|---|---|
+| Dosya diskte görüldü | `0`'a **sıfırlanır** |
+| Kayıt var, dosya diskte yok | `+1` |
+| Sayaç eşiğe ulaştı | Kayıt silinir (`RemoveRange`) |
+
+**4. Tespit mekanizması — ek sorgu gerekmiyor.** `ScanFolderAsync` zaten taramanın başında tüm kayıtları tek sorguda `existingFiles` sözlüğüne alıyor. Döngüde diskte görülen her yol bir `HashSet`'e eklenirse, döngü bittiğinde sözlükte kalan işaretsiz kayıtlar tam olarak "diskte yok" olanlardır.
+
+### Uygularken Dikkat Edilecek Dört Nokta
+
+**1. "Görüldü" işareti `try` bloğunun DIŞINDA ve önünde konmalı.** Döngüdeki `try/catch`, hash hesaplanırken oluşan hataları yutuyor. İşaretleme `try` içinde olursa, geçici bir okuma hatası alan dosya "görülmedi" sayılır ve sayacı artmaya başlar — oysa dosya yerinde duruyordur. Dosyanın *var olduğu* ile *işlenebildiği* ayrı şeylerdir.
+
+**2. Silme kapsamı taranan klasörle sınırlanmalı.** `existingFiles` veritabanındaki *tüm* kayıtları çekiyor, oysa tarama yalnızca `FolderPath`'i tarıyor. `FolderPath` değişirse — ki container'a geçerken tam olarak bu oldu, `C:\Users\...` → `/data/watch` — eski klasörün kayıtları sayacı doldurup haksız yere silinir. Sayaç bunu **çözmez, sadece geciktirir.**
+
+İşi kolaylaştıran bir durum var: tarama alt klasörlere inmiyor (`GetFiles()`), dolayısıyla taranan klasördeki her dosyanın dizini `FolderPath`'e **tam eşittir**. Kontrol bu yüzden kesin olabilir:
+
+```csharp
+Path.GetDirectoryName(kayit.FilePath) == normalizeEdilmisFolderPath
+```
+
+Yol karşılaştırması işletim sistemine göre seçilmeli: Windows'ta büyük/küçük harf ayrımı yok, Linux'ta var. Uygulama Linux container'da, testler Windows'ta koşuyor. **Alt klasör taraması eklenirse bu kontrol de değişmeli.**
+
+**3. Klasör erişilemezken silme çalışmamalı.** "Klasör boş" ile "klasör okunamıyor" birbirine benzer (ikisinde de sıfır dosya) ama anlamları zıttır: birincide kayıtlar gerçekten silinmeli, ikincide hiçbir şey yapılmamalı. Koruma şu an zaten var — `Directory.Exists` başarısızsa metot en başta `return 0` yapıyor, silme koduna hiç ulaşılmaz. **Eklenecek kod bu davranışı bozmamalı**; silme mantığı bu kontrolün üstüne taşınmamalı, kontrol "uyar ama devam et" haline getirilmemeli. Bir testle sabitlenmeli: *"klasör yokken tarama çalışır, hiçbir kayıt silinmez"*.
+
+**4. Sayaç veritabanında tutulmalı, bellekte değil.** Bellekte tutmak migration'dan kurtarırdı, ama `FolderScannerService` scoped olarak kayıtlı (her taramada yeniden oluşuyor), dolayısıyla sayaç ayrı bir singleton'da yaşamak zorunda kalırdı. Daha önemlisi: uygulama her yeniden başladığında sayaçlar sıfırlanır. Container sık restart alırsa eşiğe hiç ulaşılmaz ve silme **hiçbir zaman gerçekleşmez.** Kolon daha dürüst.
 
 ### Kapsam Dışı Sayılan
 
-Dosya *taşındığında* bu mekanizma onu "silinmiş + yeni eklenmiş" olarak görür. Hash aynı kaldığı için aslında taşındığı çıkarılabilir, ama bu ayrı bir özellik — burada ele alınmayacak.
+**Taşınan dosyalar ayrıca ele alınmayacak** — çünkü gerek yok. Sık yapılan bir varsayımı düzeltmek gerekiyor: **dosya taşındığında hash DEĞİŞMEZ.** Hash içerikten hesaplanır, taşımak içeriği değiştirmez; değişen tek şey `FilePath`'tir.
+
+Bu mekanizma taşımayı "silinmiş + yeni eklenmiş" olarak görür, ve sonuç doğrudur:
+
+```
+/data/watch/a.txt (hash H)  →  b.txt olarak yeniden adlandırıldı
+Tarama: b.txt sözlükte yok   →  yeni satır açılır, hash yine H
+        a.txt görülmedi      →  sayacı dolar, kaydı silinir
+Sonuç:  tek satır, yeni yol, aynı hash — veritabanı gerçeği yansıtıyor ✔
+```
+
+Dosya klasörün *dışına* taşınırsa kaydı silinir; zaten tek bir klasör izleniyor, dışarısı kapsam dışı.
+
+Tek kusuru raporlamada: yeniden adlandırma `newFileCount`'a 1 olarak yansır, yani `POST /api/files/scan` bunu "1 yeni dosya işlendi" diye bildirir. Taşımayı ayrı bir olay olarak tanımak (aynı hash'in kaybolan ve beliren iki yolda görülmesi) ayrı bir özelliktir, burada ele alınmayacak.
 
 
