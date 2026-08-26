@@ -8,11 +8,14 @@ namespace FileTrackingAndProcessingServices.Services
 {
     public class FolderScannerService : IFolderScannerService
     {
-        private readonly AppDbContext _context;
-        private readonly FolderWatchSettings _settings;
-        private readonly ILogger<FolderScannerService> _logger;
+        // ADIM 1: "Bu sınıf şunlara ihtiyaç duyacak" diye ilan ediyoruz
+        private readonly AppDbContext _context; // db bağlantısını burası sağlıyor.
+        private readonly FolderWatchSettings _settings; // klasör takip ayarlarını burası sağlıyor.
+        private readonly ILogger<FolderScannerService> _logger; // log tutulmasını burası sağlıyor.
 
-        public FolderScannerService(
+        // ADIM 2: .NET bu sınıfı oluştururken buraya geliyor
+        // ve gerekli nesneleri dışarıdan teslim ediyor
+        public FolderScannerService( 
             AppDbContext context,
             IOptions<FolderWatchSettings> options,
             ILogger<FolderScannerService> logger)
@@ -64,33 +67,36 @@ namespace FileTrackingAndProcessingServices.Services
                         // eskisiyle karşılaştırmak. Hash'i boş olan kayıtlar (Hash alanı
                         // eklenmeden önce oluşmuş olanlar) da burada doldurulur.
                         // Bu kontrol, alanlar tazelenmeden ÖNCE yapılmalı.
-                        bool hashGerekli = string.IsNullOrEmpty(existing.Hash)
+                        bool shouldRecomputeHash = string.IsNullOrEmpty(existing.Hash)
                             || existing.SizeBytes != file.Length
                             || existing.ModifiedAt != file.LastWriteTimeUtc;
 
-                        if (hashGerekli)
+                        if (shouldRecomputeHash)
                         {
-                            var yeniHash = await ComputeHashAsync(file);
+                            // "computed" adı bilinçli: bu değer henüz "yeni" değil,
+                            // sadece taze hesaplanmış olan. Aşağıdaki karşılaştırma
+                            // eskisiyle aynı çıkarsa içerik hiç değişmemiş demektir.
+                            var computedHash = await ComputeHashAsync(file);
 
                             if (string.IsNullOrEmpty(existing.Hash))
                             {
                                 _logger.LogDebug("Hash'i olmayan kayıt dolduruldu: {FileName}", file.Name);
                             }
-                            else if (existing.Hash != yeniHash)
+                            else if (existing.Hash != computedHash)
                             {
                                 _logger.LogInformation("Dosya içeriği değişti: {FileName}", file.Name);
                             }
                             else
                             {
                                 // Hash aynıysa içerik de aynıdır; boyut değişseydi hash de
-                                // değişirdi. Demek ki hashGerekli'yi tetikleyen tek şey
-                                // tarihmiş — ör. yedekten geri yükleme, dosyanın açılıp
+                                // değişirdi. Demek ki shouldRecomputeHash'i tetikleyen tek
+                                // şey tarihmiş — ör. yedekten geri yükleme, dosyanın açılıp
                                 // değiştirilmeden kaydedilmesi.
                                 _logger.LogDebug(
                                     "Değiştirilme tarihi değişti ama içerik aynı: {FileName}", file.Name);
                             }
 
-                            existing.Hash = yeniHash;
+                            existing.Hash = computedHash;
                         }
 
                         // Zaten işlenmiş — tekrar İŞLENMEZ, yeni satır açılmaz.

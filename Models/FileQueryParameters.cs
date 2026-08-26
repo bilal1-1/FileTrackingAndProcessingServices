@@ -17,13 +17,13 @@ namespace FileTrackingAndProcessingServices.Models
         public int Page
         {
             get => _page;
-            set => _page = value < 1 ? 1 : value;
+            set => _page = value < 1 ? 1 : value; // 1'den küçükse 1 ata, değilse değeri ata
         }
 
         public int PageSize
         {
             get => _pageSize;
-            set => _pageSize = value < 1 ? 1 : (value > MaxPageSize ? MaxPageSize : value);
+            set => _pageSize = value < 1 ? 1 : (value > MaxPageSize ? MaxPageSize : value); // sayfadaki kayıt sayısını kontrol ediyoruz
         }
 
         /// <summary>

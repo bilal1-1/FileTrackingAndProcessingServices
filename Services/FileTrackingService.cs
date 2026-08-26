@@ -13,11 +13,11 @@ namespace FileTrackingAndProcessingServices.Services
             _context = context;
         }
 
-        public async Task<PagedResult<TrackedFile>> GetAllFilesAsync(FileQueryParameters parameters)
+        public async Task<PagedResult<TrackedFile>> GetAllFilesAsync(FileQueryParameters parameters) // Tüm dosyaları sayfalı getirir (filtreleme/sıralama parametreleri ile)
         {
-            var query = _context.TrackedFiles.AsQueryable();
+            var query = _context.TrackedFiles.AsQueryable(); // IQueryable, LINQ sorgularının veritabanına çevrilmesini sağlar.
 
-            bool descending = parameters.SortOrder
+            bool descending = parameters.SortOrder // DESC veya ASC parametresi için
                 .Equals("desc", StringComparison.OrdinalIgnoreCase);
 
             // Sıralanabilir alanlar beyaz liste ile sınırlı: istemciden gelen
@@ -45,38 +45,39 @@ namespace FileTrackingAndProcessingServices.Services
             };
 
             // Eşit değerlerde sıra rastgele kalmasın diye ikincil sıralama.
-            // Aksi halde aynı kayıt iki farklı sayfada görünebilir.
+            // eşit değerlerde her zaman Id'ye göre sırala, tutarlı ol.
             query = ordered.ThenBy(f => f.Id);
 
             // Toplam sayı, sayfalama uygulanmadan önce hesaplanır.
             int totalCount = await query.CountAsync();
 
-            var items = await query
+            var items = await query // sayfalamayı yapar
                 .Skip((parameters.Page - 1) * parameters.PageSize)
                 .Take(parameters.PageSize)
                 .ToListAsync();
 
             return new PagedResult<TrackedFile>
             {
-                Items = items,
-                Page = parameters.Page,
-                PageSize = parameters.PageSize,
-                TotalCount = totalCount
+                Items = items, // Bu sayfadaki dosyalar
+                Page = parameters.Page, // Kaçıncı sayfa
+                PageSize = parameters.PageSize, // Sayfa başı kayıt
+                TotalCount = totalCount // Toplam dosya sayısı
             };
         }
-
+        // Verilen ID'ye sahip dosyayı getirir; bulunamazsa null döner.
         public async Task<TrackedFile?> GetByIdAsync(int id)
         {
+            // FirstOrDefaultAsync: eşleşen ilk kaydı döndürür, yoksa null.
             return await _context.TrackedFiles.FirstOrDefaultAsync(f => f.Id == id);
         }
-        
+        // Verilen uzantıya (.pdf, .docx vb.) sahip tüm dosyaları arar.
         public async Task<List<TrackedFile>> SearchByExtensionAsync(string extension)
         {
-            var aranan = UzantiyiNormallestir(extension);
+            var normalizedExtension = NormalizeExtension(extension);
 
             // Boş aramada veritabanına hiç gidilmiyor: hiçbir uzantı boş
             // olmadığı için sorgu zaten kesin olarak boş dönerdi.
-            if (aranan.Length == 0)
+            if (normalizedExtension.Length == 0)
             {
                 return new List<TrackedFile>();
             }
@@ -85,14 +86,14 @@ namespace FileTrackingAndProcessingServices.Services
             // çevrilir; karşılaştırma veritabanında yapılır, tüm tablo belleğe
             // çekilmez.
             return await _context.TrackedFiles
-                .Where(f => f.Extension.ToLower() == aranan)
+                .Where(f => f.Extension.ToLower() == normalizedExtension)
                 .ToListAsync();
         }
 
         /// <summary>
         /// Kullanıcının yazdığı uzantıyı, veritabanında saklanan biçime çevirir.
         /// </summary>
-        private static string UzantiyiNormallestir(string extension)
+        private static string NormalizeExtension(string extension)
         {
             // Küçük harfe indirme ToLowerInvariant() ile yapılıyor, ToLower() ile
             // DEĞİL: ToLower() makinenin kültürünü kullanır ve Türkçe kültürde
@@ -102,9 +103,9 @@ namespace FileTrackingAndProcessingServices.Services
             //
             // Büyük/küçük harf duyarsızlığı şart, çünkü diskte "BELGE.TXT" varsa
             // tarayıcı uzantıyı ".TXT" olarak kaydeder ama kullanıcı ".txt" arar.
-            var aranan = (extension ?? string.Empty).Trim().ToLowerInvariant();
+            var normalized = (extension ?? string.Empty).Trim().ToLowerInvariant();
 
-            if (aranan.Length == 0)
+            if (normalized.Length == 0)
             {
                 return string.Empty;
             }
@@ -115,7 +116,7 @@ namespace FileTrackingAndProcessingServices.Services
             // (search?extension=pdf) noktasız. Bu satır olmadan "pdf" araması
             // hiçbir şey bulamıyor ve üstelik hata da vermiyordu: sonuç boş liste
             // olduğu için "böyle dosya yok" gibi görünüyordu.
-            return aranan.StartsWith('.') ? aranan : '.' + aranan;
+            return normalized.StartsWith('.') ? normalized : '.' + normalized;
         }
 
         public async Task<List<DuplicateGroup>> GetDuplicatesAsync()
@@ -126,11 +127,11 @@ namespace FileTrackingAndProcessingServices.Services
             //    Hash'i boş olan kayıtlar dışarıda bırakılır — henüz hesaplanmamış
             //    olmaları onları birbirinin kopyası yapmaz.
             var duplicateHashes = await _context.TrackedFiles
-                .Where(f => f.Hash != "")
-                .GroupBy(f => f.Hash)
-                .Where(g => g.Count() > 1)
-                .Select(g => g.Key)
-                .ToListAsync();
+                .Where(f => f.Hash != "") // boş hash'leri atla
+                .GroupBy(f => f.Hash) // aynı hash'e göre grupla
+                .Where(g => g.Count() > 1) // 1'den fazla olan gruplar = duplicate
+                .Select(g => g.Key) // sadece hash değerini al (dosyaları değil)
+                .ToListAsync(); // DB' ye git
 
             if (duplicateHashes.Count == 0)
             {
@@ -145,7 +146,7 @@ namespace FileTrackingAndProcessingServices.Services
             // 3. Gruplara ayır. Bu aşama bellekte — elde zaten sadece yinelenen
             //    kayıtlar var, tüm tablo değil.
             return files
-                .GroupBy(f => f.Hash)
+                .GroupBy(f => f.Hash) 
                 .Select(g => new DuplicateGroup
                 {
                     Hash = g.Key,

@@ -12,253 +12,257 @@ namespace FileTrackingAndProcessingServices.Tests.Services
     /// kontrolü ve hash karşılaştırması. Gerçek bir geçici klasör ve gerçek bir
     /// PostgreSQL kullanılıyor.
     /// </summary>
-    [Collection(VeritabaniKoleksiyonu.Ad)]
+    [Collection(DatabaseCollection.Name)]
     public class FolderScannerServiceTests : IDisposable
     {
-        private readonly VeritabaniOrtami _ortam;
-        private readonly GeciciKlasor _klasor;
+        private readonly TestDatabase _db;
+        private readonly TempFolder _folder;
 
-        public FolderScannerServiceTests(PostgreSqlSunucusu sunucu)
+        public FolderScannerServiceTests(PostgreSqlContainerFixture fixture)
         {
-            _ortam = new VeritabaniOrtami(sunucu);
-            _klasor = new GeciciKlasor();
+            _db = new TestDatabase(fixture);
+            _folder = new TempFolder();
         }
 
         public void Dispose()
         {
-            _ortam.Dispose();
-            _klasor.Dispose();
+            _db.Dispose();
+            _folder.Dispose();
         }
 
-        private FolderScannerService Tarayici(string? klasorYolu = null)
+        // Parametre verilmezse testin kendi geçici klasörünü tarar; verilirse
+        // (ör. var olmayan bir yol) onu tarar.
+        private FolderScannerService CreateScanner(string? folderPath = null)
         {
-            var ayarlar = Options.Create(new FolderWatchSettings
+            var settings = Options.Create(new FolderWatchSettings
             {
-                FolderPath = klasorYolu ?? _klasor.Yol,
+                FolderPath = folderPath ?? _folder.FullPath,
                 ScanIntervalSeconds = 60
             });
 
             return new FolderScannerService(
-                _ortam.Context,
-                ayarlar,
+                _db.Context,
+                settings,
                 NullLogger<FolderScannerService>.Instance);
         }
 
         // ---------- Yeni dosya algılama ----------
 
         [Fact]
-        public async Task Tarama_YeniDosya_KaydedilirVeAlanlariDoldurulur()
+        public async Task Scan_NewFile_IsSavedWithAllFieldsPopulated()
         {
-            _klasor.DosyaYaz("rapor.txt", "merhaba dunya");
+            _folder.WriteFile("rapor.txt", "merhaba dunya");
 
-            int yeniSayisi = await Tarayici().ScanFolderAsync();
+            int newFileCount = await CreateScanner().ScanFolderAsync();
 
-            Assert.Equal(1, yeniSayisi);
+            Assert.Equal(1, newFileCount);
 
-            var kayit = await _ortam.Context.TrackedFiles.SingleAsync();
-            Assert.Equal("rapor.txt", kayit.FileName);
-            Assert.Equal(".txt", kayit.Extension);
-            Assert.Equal(Path.Combine(_klasor.Yol, "rapor.txt"), kayit.FilePath);
-            Assert.Equal(13, kayit.SizeBytes);              // "merhaba dunya" 13 bayt
-            Assert.Equal(64, kayit.Hash.Length);            // SHA-256 hex karşılığı
+            var file = await _db.Context.TrackedFiles.SingleAsync();
+            Assert.Equal("rapor.txt", file.FileName);
+            Assert.Equal(".txt", file.Extension);
+            Assert.Equal(Path.Combine(_folder.FullPath, "rapor.txt"), file.FilePath);
+            Assert.Equal(13, file.SizeBytes);              // "merhaba dunya" 13 bayt
+            Assert.Equal(64, file.Hash.Length);            // SHA-256 hex karşılığı
         }
 
         [Fact]
-        public async Task Tarama_BosKlasor_SifirDoner()
+        public async Task Scan_EmptyFolder_ReturnsZero()
         {
-            int yeniSayisi = await Tarayici().ScanFolderAsync();
+            int newFileCount = await CreateScanner().ScanFolderAsync();
 
-            Assert.Equal(0, yeniSayisi);
-            Assert.Empty(_ortam.Context.TrackedFiles);
+            Assert.Equal(0, newFileCount);
+            Assert.Empty(_db.Context.TrackedFiles);
         }
 
         [Fact]
-        public async Task Tarama_KlasorYoksa_SifirDonerVeCokmez()
+        public async Task Scan_MissingFolder_ReturnsZeroWithoutThrowing()
         {
-            var olmayanYol = Path.Combine(Path.GetTempPath(), "boyle-bir-klasor-yok-" + Guid.NewGuid());
+            var missingFolderPath = Path.Combine(Path.GetTempPath(), "boyle-bir-klasor-yok-" + Guid.NewGuid());
 
-            int yeniSayisi = await Tarayici(olmayanYol).ScanFolderAsync();
+            int newFileCount = await CreateScanner(missingFolderPath).ScanFolderAsync();
 
-            Assert.Equal(0, yeniSayisi);
-            Assert.Empty(_ortam.Context.TrackedFiles);
+            Assert.Equal(0, newFileCount);
+            Assert.Empty(_db.Context.TrackedFiles);
         }
 
         [Fact]
-        public async Task Tarama_AltKlasordekiDosya_TaranmazSuAn()
+        public async Task Scan_FileInSubFolder_IsNotScannedYet()
         {
             // GetFiles() alt klasörlere inmiyor. Bu test mevcut davranışı
             // kayıt altına alıyor; alt klasör desteği eklenirse burası da
             // değişmeli.
-            var altKlasor = _klasor.AltKlasorOlustur("arsiv");
-            File.WriteAllText(Path.Combine(altKlasor, "gizli.txt"), "icerik");
-            _klasor.DosyaYaz("gorunur.txt", "icerik");
+            var subFolder = _folder.CreateSubFolder("arsiv");
+            File.WriteAllText(Path.Combine(subFolder, "gizli.txt"), "icerik");
+            _folder.WriteFile("gorunur.txt", "icerik");
 
-            int yeniSayisi = await Tarayici().ScanFolderAsync();
+            int newFileCount = await CreateScanner().ScanFolderAsync();
 
-            Assert.Equal(1, yeniSayisi);
-            var kayit = await _ortam.Context.TrackedFiles.SingleAsync();
-            Assert.Equal("gorunur.txt", kayit.FileName);
+            Assert.Equal(1, newFileCount);
+            var file = await _db.Context.TrackedFiles.SingleAsync();
+            Assert.Equal("gorunur.txt", file.FileName);
         }
 
         // ---------- Tekrar kontrolü ----------
 
         [Fact]
-        public async Task Tarama_AyniDosyaIkinciKez_YeniKayitAcilmaz()
+        public async Task Scan_SameFileTwice_DoesNotCreateSecondRecord()
         {
-            _klasor.DosyaYaz("rapor.txt", "icerik");
+            _folder.WriteFile("rapor.txt", "icerik");
 
-            int ilkTarama = await Tarayici().ScanFolderAsync();
-            int ikinciTarama = await Tarayici().ScanFolderAsync();
+            int firstScan = await CreateScanner().ScanFolderAsync();
+            int secondScan = await CreateScanner().ScanFolderAsync();
 
-            Assert.Equal(1, ilkTarama);
-            Assert.Equal(0, ikinciTarama);      // tekrar işlenmemeli
-            Assert.Equal(1, await _ortam.Context.TrackedFiles.CountAsync());
+            Assert.Equal(1, firstScan);
+            Assert.Equal(0, secondScan);      // tekrar işlenmemeli
+            Assert.Equal(1, await _db.Context.TrackedFiles.CountAsync());
         }
 
         [Fact]
-        public async Task Tarama_UcKezUstUste_KayitSayisiSabitKalir()
+        public async Task Scan_ThreeTimesInARow_RecordCountStaysConstant()
         {
-            _klasor.DosyaYaz("a.txt", "aaa");
-            _klasor.DosyaYaz("b.txt", "bbb");
+            _folder.WriteFile("a.txt", "aaa");
+            _folder.WriteFile("b.txt", "bbb");
 
-            await Tarayici().ScanFolderAsync();
-            await Tarayici().ScanFolderAsync();
-            await Tarayici().ScanFolderAsync();
+            await CreateScanner().ScanFolderAsync();
+            await CreateScanner().ScanFolderAsync();
+            await CreateScanner().ScanFolderAsync();
 
-            Assert.Equal(2, await _ortam.Context.TrackedFiles.CountAsync());
+            Assert.Equal(2, await _db.Context.TrackedFiles.CountAsync());
         }
 
         // ---------- Hash davranışı ----------
 
         [Fact]
-        public async Task Tarama_HesaplananHash_BilinenSha256DegeriyleAyni()
+        public async Task Scan_ComputedHash_MatchesKnownSha256Value()
         {
             // Dışarıdan doğrulama: "hello" metninin SHA-256 karşılığı bilinen
             // sabit bir değer. Servisin ürettiği hash buna eşit değilse
             // implementasyon yanlıştır.
-            _klasor.DosyaYaz("hello.txt", "hello");
+            _folder.WriteFile("hello.txt", "hello");
 
-            await Tarayici().ScanFolderAsync();
+            await CreateScanner().ScanFolderAsync();
 
-            var kayit = await _ortam.Context.TrackedFiles.SingleAsync();
+            var file = await _db.Context.TrackedFiles.SingleAsync();
             Assert.Equal(
                 "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
-                kayit.Hash);
+                file.Hash);
         }
 
         [Fact]
-        public async Task Tarama_AyniIcerikliFarkliDosyalar_AyniHashAlir()
+        public async Task Scan_DifferentFilesSameContent_GetSameHash()
         {
-            _klasor.DosyaYaz("kopya-a.txt", "birebir ayni icerik");
-            _klasor.DosyaYaz("kopya-b.txt", "birebir ayni icerik");
+            _folder.WriteFile("kopya-a.txt", "birebir ayni icerik");
+            _folder.WriteFile("kopya-b.txt", "birebir ayni icerik");
 
-            await Tarayici().ScanFolderAsync();
+            await CreateScanner().ScanFolderAsync();
 
-            var kayitlar = await _ortam.Context.TrackedFiles.ToListAsync();
-            Assert.Equal(2, kayitlar.Count);
-            Assert.Equal(kayitlar[0].Hash, kayitlar[1].Hash);
+            var files = await _db.Context.TrackedFiles.ToListAsync();
+            Assert.Equal(2, files.Count);
+            Assert.Equal(files[0].Hash, files[1].Hash);
         }
 
         [Fact]
-        public async Task Tarama_FarkliIcerik_FarkliHashAlir()
+        public async Task Scan_DifferentContent_GetsDifferentHash()
         {
-            _klasor.DosyaYaz("a.txt", "birinci icerik");
-            _klasor.DosyaYaz("b.txt", "ikinci icerik");
+            _folder.WriteFile("a.txt", "birinci icerik");
+            _folder.WriteFile("b.txt", "ikinci icerik");
 
-            await Tarayici().ScanFolderAsync();
+            await CreateScanner().ScanFolderAsync();
 
-            var kayitlar = await _ortam.Context.TrackedFiles.ToListAsync();
-            Assert.NotEqual(kayitlar[0].Hash, kayitlar[1].Hash);
+            var files = await _db.Context.TrackedFiles.ToListAsync();
+            Assert.NotEqual(files[0].Hash, files[1].Hash);
         }
 
         [Fact]
-        public async Task Tarama_IcerikDegisti_HashYenilenirYeniSatirAcilmaz()
+        public async Task Scan_ContentChanged_HashRefreshedWithoutNewRow()
         {
-            var dosyaYolu = _klasor.DosyaYaz("rapor.txt", "eski icerik");
-            await Tarayici().ScanFolderAsync();
+            var filePath = _folder.WriteFile("rapor.txt", "eski icerik");
+            await CreateScanner().ScanFolderAsync();
 
-            var eskiKayit = await _ortam.Context.TrackedFiles.SingleAsync();
-            var eskiHash = eskiKayit.Hash;
-            var eskiId = eskiKayit.Id;
-            _ortam.Context.ChangeTracker.Clear();
+            // "before/after" adlandırması bilinçli: bu ikisi farklı kayıtlar
+            // değil, AYNI satırın tarama öncesi ve sonrası hali.
+            var beforeScan = await _db.Context.TrackedFiles.SingleAsync();
+            var originalHash = beforeScan.Hash;
+            var originalId = beforeScan.Id;
+            _db.Context.ChangeTracker.Clear();
 
-            File.WriteAllText(dosyaYolu, "tamamen farkli yeni icerik");
-            int yeniSayisi = await Tarayici().ScanFolderAsync();
+            File.WriteAllText(filePath, "tamamen farkli yeni icerik");
+            int newFileCount = await CreateScanner().ScanFolderAsync();
 
-            Assert.Equal(0, yeniSayisi);   // yeni dosya değil, güncelleme
-            var guncelKayit = await _ortam.Context.TrackedFiles.SingleAsync();
-            Assert.Equal(eskiId, guncelKayit.Id);            // aynı satır
-            Assert.NotEqual(eskiHash, guncelKayit.Hash);     // hash yenilendi
-            Assert.Equal(26, guncelKayit.SizeBytes);         // boyut da tazelendi
+            Assert.Equal(0, newFileCount);   // yeni dosya değil, güncelleme
+            var afterScan = await _db.Context.TrackedFiles.SingleAsync();
+            Assert.Equal(originalId, afterScan.Id);            // aynı satır
+            Assert.NotEqual(originalHash, afterScan.Hash);     // hash yenilendi
+            Assert.Equal(26, afterScan.SizeBytes);             // boyut da tazelendi
         }
 
         [Fact]
-        public async Task Tarama_SadeceTarihDegisti_HashAyniKalir()
+        public async Task Scan_OnlyTimestampChanged_HashStaysSame()
         {
             // Yedekten geri yükleme / dosyanın değiştirilmeden kaydedilmesi
             // senaryosu: tarih değişir, içerik aynı kalır. Hash yeniden
             // hesaplanır ama sonuç değişmemelidir.
-            var dosyaYolu = _klasor.DosyaYaz("rapor.txt", "degismeyen icerik");
-            await Tarayici().ScanFolderAsync();
+            var filePath = _folder.WriteFile("rapor.txt", "degismeyen icerik");
+            await CreateScanner().ScanFolderAsync();
 
-            var eskiHash = (await _ortam.Context.TrackedFiles.SingleAsync()).Hash;
-            _ortam.Context.ChangeTracker.Clear();
+            var originalHash = (await _db.Context.TrackedFiles.SingleAsync()).Hash;
+            _db.Context.ChangeTracker.Clear();
 
             // Tarayıcı diske UTC yazıyor; test de UTC uçlarını kullanmalı, aksi
             // halde karşılaştırma saat dilimi farkı kadar kayar.
-            var yeniTarih = File.GetLastWriteTimeUtc(dosyaYolu).AddHours(5);
-            File.SetLastWriteTimeUtc(dosyaYolu, yeniTarih);
+            var shiftedTimestamp = File.GetLastWriteTimeUtc(filePath).AddHours(5);
+            File.SetLastWriteTimeUtc(filePath, shiftedTimestamp);
 
-            await Tarayici().ScanFolderAsync();
+            await CreateScanner().ScanFolderAsync();
 
-            var guncelKayit = await _ortam.Context.TrackedFiles.SingleAsync();
-            Assert.Equal(eskiHash, guncelKayit.Hash);        // içerik aynı → hash aynı
-            Assert.Equal(yeniTarih, guncelKayit.ModifiedAt); // tarih tazelendi
+            var afterScan = await _db.Context.TrackedFiles.SingleAsync();
+            Assert.Equal(originalHash, afterScan.Hash);            // içerik aynı → hash aynı
+            Assert.Equal(shiftedTimestamp, afterScan.ModifiedAt);  // tarih tazelendi
         }
 
         [Fact]
-        public async Task Tarama_HashiBosOlanEskiKayit_Doldurulur()
+        public async Task Scan_LegacyRecordWithEmptyHash_IsBackfilled()
         {
             // Hash alanı eklenmeden önce oluşmuş kayıtlar geri doldurulmalı;
             // veritabanını sıfırlamaya gerek kalmamalı.
-            var dosyaYolu = _klasor.DosyaYaz("eski.txt", "icerik");
-            var dosyaBilgisi = new FileInfo(dosyaYolu);
+            var filePath = _folder.WriteFile("eski.txt", "icerik");
+            var fileInfo = new FileInfo(filePath);
 
-            _ortam.Ekle(new TrackedFile
+            _db.Seed(new TrackedFile
             {
-                FileName = dosyaBilgisi.Name,
-                FilePath = dosyaBilgisi.FullName,
-                Extension = dosyaBilgisi.Extension,
+                FileName = fileInfo.Name,
+                FilePath = fileInfo.FullName,
+                Extension = fileInfo.Extension,
                 Hash = "",                                  // hash'siz eski kayıt
-                SizeBytes = dosyaBilgisi.Length,
-                CreatedAt = dosyaBilgisi.CreationTimeUtc,
-                ModifiedAt = dosyaBilgisi.LastWriteTimeUtc
+                SizeBytes = fileInfo.Length,
+                CreatedAt = fileInfo.CreationTimeUtc,
+                ModifiedAt = fileInfo.LastWriteTimeUtc
             });
 
-            int yeniSayisi = await Tarayici().ScanFolderAsync();
+            int newFileCount = await CreateScanner().ScanFolderAsync();
 
-            Assert.Equal(0, yeniSayisi);                    // yeni kayıt açılmadı
-            var kayit = await _ortam.Context.TrackedFiles.SingleAsync();
-            Assert.Equal(64, kayit.Hash.Length);            // hash dolduruldu
+            Assert.Equal(0, newFileCount);                  // yeni kayıt açılmadı
+            var file = await _db.Context.TrackedFiles.SingleAsync();
+            Assert.Equal(64, file.Hash.Length);             // hash dolduruldu
         }
 
         // ---------- Uçtan uca: tarama + yinelenen tespiti ----------
 
         [Fact]
-        public async Task TaramaSonrasi_YinelenenTespiti_KopyalariBulur()
+        public async Task AfterScan_DuplicateDetection_FindsCopies()
         {
-            _klasor.DosyaYaz("kopya-a.txt", "ayni icerik");
-            _klasor.DosyaYaz("kopya-b.txt", "ayni icerik");
-            _klasor.DosyaYaz("tekil-c.txt", "farkli icerik");
+            _folder.WriteFile("kopya-a.txt", "ayni icerik");
+            _folder.WriteFile("kopya-b.txt", "ayni icerik");
+            _folder.WriteFile("tekil-c.txt", "farkli icerik");
 
-            await Tarayici().ScanFolderAsync();
+            await CreateScanner().ScanFolderAsync();
 
-            var trackingService = new FileTrackingService(_ortam.Context);
-            var gruplar = await trackingService.GetDuplicatesAsync();
+            var trackingService = new FileTrackingService(_db.Context);
+            var groups = await trackingService.GetDuplicatesAsync();
 
-            var grup = Assert.Single(gruplar);
-            Assert.Equal(2, grup.Count);
-            Assert.DoesNotContain(grup.Files, f => f.FileName == "tekil-c.txt");
+            var group = Assert.Single(groups);
+            Assert.Equal(2, group.Count);
+            Assert.DoesNotContain(group.Files, f => f.FileName == "tekil-c.txt");
         }
     }
 }

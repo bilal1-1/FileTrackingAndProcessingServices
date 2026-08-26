@@ -10,13 +10,16 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
     /// Neden tek container: container başlatmak birkaç saniye sürer. Her test
     /// için ayrı container açılsaydı 71 test dakikalarca sürerdi. Bunun yerine
     /// container bir kez açılır, testler arası izolasyon tabloyu boşaltarak
-    /// sağlanır (bkz. VeritabaniOrtami).
+    /// sağlanır (bkz. TestDatabase).
     ///
     /// Şema, uygulamanın açılışta yaptığının aynısı olan Database.Migrate() ile
     /// kuruluyor — EnsureCreated() ile değil. Böylece migration'ın gerçekten
     /// çalışabilir bir şema ürettiği de her test koşusunda doğrulanmış olur.
+    ///
+    /// Sınıf adındaki "Fixture" xUnit terimi: ICollectionFixture ile kaydedilen,
+    /// ömrü tek bir testten uzun olan paylaşımlı nesne demek.
     /// </summary>
-    public sealed class PostgreSqlSunucusu : IAsyncLifetime
+    public sealed class PostgreSqlContainerFixture : IAsyncLifetime
     {
         // İmaj sürümü sabitleniyor: docker-compose.yml de postgres:17 kullanıyor.
         // Testlerin üretimden farklı bir sürüme koşması, bu geçişte kaçınmak
@@ -28,7 +31,7 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
         /// Container ayağa kalktıktan sonra dolan bağlantı dizesi. Port her
         /// koşuda rastgele seçildiği için sabit yazılamaz, container'dan alınır.
         /// </summary>
-        public string BaglantiDizesi => _container.GetConnectionString();
+        public string ConnectionString => _container.GetConnectionString();
 
         public async Task InitializeAsync()
         {
@@ -36,17 +39,17 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
 
             // Şemayı bir kez kur. Testler tabloyu boşaltarak izole olduğu için
             // her testte yeniden kurmaya gerek yok.
-            await using var context = YeniContext();
+            await using var context = CreateContext();
             await context.Database.MigrateAsync();
         }
 
         /// <summary>
         /// Bu container'a bağlı yeni bir DbContext üretir.
         /// </summary>
-        public AppDbContext YeniContext()
+        public AppDbContext CreateContext()
         {
             var options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseNpgsql(BaglantiDizesi)
+                .UseNpgsql(ConnectionString)
                 .Options;
 
             return new AppDbContext(options);
@@ -63,10 +66,10 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
     /// şart — testler tek bir veritabanını paylaşıp tabloyu boşaltarak izole
     /// oluyor, paralel koşsalardı birbirlerinin verisini silerlerdi.
     /// </summary>
-    [CollectionDefinition(Ad)]
-    public class VeritabaniKoleksiyonu : ICollectionFixture<PostgreSqlSunucusu>
+    [CollectionDefinition(Name)]
+    public class DatabaseCollection : ICollectionFixture<PostgreSqlContainerFixture>
     {
-        public const string Ad = "PostgreSQL";
+        public const string Name = "PostgreSQL";
 
         // Gövde bilinçli olarak boş: xUnit bu sınıfı yalnızca yukarıdaki
         // öznitelik ve arayüzü okumak için kullanır, örneğini hiç oluşturmaz.

@@ -5,12 +5,15 @@ namespace FileTrackingAndProcessingServices.Data
 {
     public class AppDbContext : DbContext
     {
+        // bu constructor appsettings içinden db bilgilerini alarak veritabanı bağlantısını kuruyor.
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
         {
         }
-
+        
+        // bu da trackedfiles tablosunu temsil ediyor.
         public DbSet<TrackedFile> TrackedFiles { get; set; }
 
+        // model nesnelerini veritabanı tablosu olarak yapılandırdığımız yer.
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

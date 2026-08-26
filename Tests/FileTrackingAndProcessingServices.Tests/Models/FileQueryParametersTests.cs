@@ -10,7 +10,7 @@ namespace FileTrackingAndProcessingServices.Tests.Models
     public class FileQueryParametersTests
     {
         [Fact]
-        public void VarsayilanDegerler_BeklenenlerleAyni()
+        public void Defaults_MatchExpectedValues()
         {
             var parameters = new FileQueryParameters();
 
@@ -24,9 +24,9 @@ namespace FileTrackingAndProcessingServices.Tests.Models
         [InlineData(0)]      // sayfa numarası sıfır olamaz
         [InlineData(-1)]
         [InlineData(-999)]
-        public void Page_BirdenKucukVerilirse_BireCekilir(int gelenDeger)
+        public void Page_BelowMinimum_ClampedToOne(int input)
         {
-            var parameters = new FileQueryParameters { Page = gelenDeger };
+            var parameters = new FileQueryParameters { Page = input };
 
             Assert.Equal(1, parameters.Page);
         }
@@ -35,19 +35,19 @@ namespace FileTrackingAndProcessingServices.Tests.Models
         [InlineData(1)]
         [InlineData(7)]
         [InlineData(1000)]   // üst sınır yok, sadece alt sınır var
-        public void Page_GecerliDeger_OldugunuGibiKorunur(int gelenDeger)
+        public void Page_ValidValue_KeptAsIs(int input)
         {
-            var parameters = new FileQueryParameters { Page = gelenDeger };
+            var parameters = new FileQueryParameters { Page = input };
 
-            Assert.Equal(gelenDeger, parameters.Page);
+            Assert.Equal(input, parameters.Page);
         }
 
         [Theory]
         [InlineData(0)]
         [InlineData(-5)]
-        public void PageSize_BirdenKucukVerilirse_BireCekilir(int gelenDeger)
+        public void PageSize_BelowMinimum_ClampedToOne(int input)
         {
-            var parameters = new FileQueryParameters { PageSize = gelenDeger };
+            var parameters = new FileQueryParameters { PageSize = input };
 
             Assert.Equal(1, parameters.PageSize);
         }
@@ -55,9 +55,9 @@ namespace FileTrackingAndProcessingServices.Tests.Models
         [Theory]
         [InlineData(101)]
         [InlineData(10_000)]   // istemci sunucuyu tek istekle zorlayamamalı
-        public void PageSize_UstSinirdanBuyukVerilirse_YuzeKirpilir(int gelenDeger)
+        public void PageSize_AboveMaximum_ClampedToHundred(int input)
         {
-            var parameters = new FileQueryParameters { PageSize = gelenDeger };
+            var parameters = new FileQueryParameters { PageSize = input };
 
             Assert.Equal(100, parameters.PageSize);
         }
@@ -66,11 +66,11 @@ namespace FileTrackingAndProcessingServices.Tests.Models
         [InlineData(1)]
         [InlineData(50)]
         [InlineData(100)]      // tam sınır değeri kırpılmamalı
-        public void PageSize_SinirlarIcindeyse_OldugunuGibiKorunur(int gelenDeger)
+        public void PageSize_WithinLimits_KeptAsIs(int input)
         {
-            var parameters = new FileQueryParameters { PageSize = gelenDeger };
+            var parameters = new FileQueryParameters { PageSize = input };
 
-            Assert.Equal(gelenDeger, parameters.PageSize);
+            Assert.Equal(input, parameters.PageSize);
         }
     }
 }

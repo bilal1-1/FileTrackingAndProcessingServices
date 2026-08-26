@@ -23,14 +23,18 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
     /// sağlanıyor: TRUNCATE milisaniyeler sürer, container açmak saniyeler.
     /// RESTART IDENTITY olmadan Id sayacı testler arasında büyümeye devam eder
     /// ve "ilk kaydın Id'si 1" gibi beklentiler kırılırdı.
+    ///
+    /// Adı "DatabaseFixture" DEĞİL: bu sınıf her test için elle oluşturuluyor,
+    /// xUnit'in fixture mekanizmasıyla değil. Gerçek fixture olan
+    /// PostgreSqlContainerFixture ile karışmasın.
     /// </summary>
-    public sealed class VeritabaniOrtami : IDisposable
+    public sealed class TestDatabase : IDisposable
     {
         public AppDbContext Context { get; }
 
-        public VeritabaniOrtami(PostgreSqlSunucusu sunucu)
+        public TestDatabase(PostgreSqlContainerFixture fixture)
         {
-            Context = sunucu.YeniContext();
+            Context = fixture.CreateContext();
             Context.Database.ExecuteSqlRaw(@"TRUNCATE TABLE ""TrackedFiles"" RESTART IDENTITY");
         }
 
@@ -38,10 +42,13 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
         /// Verilen kayıtları veritabanına yazar ve değişiklik takibini temizler.
         /// Takip temizlenmezse servis, veritabanından okumak yerine bellekteki
         /// nesneleri döndürebilir ve test gerçek sorguyu doğrulamamış olur.
+        ///
+        /// Adı "Add" değil "Seed": sadece ekleme yapmıyor, testin başlangıç
+        /// durumunu kuruyor — takip temizliği de bu işin parçası.
         /// </summary>
-        public void Ekle(params TrackedFile[] kayitlar)
+        public void Seed(params TrackedFile[] files)
         {
-            Context.TrackedFiles.AddRange(kayitlar);
+            Context.TrackedFiles.AddRange(files);
             Context.SaveChanges();
             Context.ChangeTracker.Clear();
         }
@@ -49,8 +56,11 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
         /// <summary>
         /// Testlerde tekrar tekrar yazmamak için hazır bir TrackedFile üretir.
         /// Sadece teste konu olan alanlar dışarıdan verilir.
+        ///
+        /// Adı kısaca "File" DEĞİL: System.IO.File ile çakışırdı ve testlerde
+        /// o tip de kullanılıyor (File.WriteAllText, File.SetLastWriteTimeUtc).
         /// </summary>
-        public static TrackedFile Dosya(
+        public static TrackedFile CreateTrackedFile(
             string fileName,
             string extension = ".txt",
             string hash = "",
@@ -75,8 +85,8 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
         }
 
         // Container'ı DEĞİL yalnızca bu testin bağlantısını kapatır; container
-        // koleksiyondaki tüm testler bitince PostgreSqlSunucusu tarafından
-        // kapatılır.
+        // koleksiyondaki tüm testler bitince PostgreSqlContainerFixture
+        // tarafından kapatılır.
         public void Dispose() => Context.Dispose();
     }
 }

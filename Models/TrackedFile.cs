@@ -11,7 +11,7 @@ namespace FileTrackingAndProcessingServices.Models
         /// Dosya içeriğinin SHA-256 parmak izi (64 karakter, küçük harf hex).
         /// İçerik değiştiğinde yeniden hesaplanır.
         /// </summary>
-        public string Hash { get; set; } = string.Empty;
+        public string Hash { get; set; } = string.Empty; // başlangıçta nullable özelliği açık olduğundan dolayı hata vermemesi için boş string atadık
         public long SizeBytes { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime ModifiedAt { get; set; }

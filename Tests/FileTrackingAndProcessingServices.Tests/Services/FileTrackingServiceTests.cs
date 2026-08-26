@@ -6,296 +6,299 @@ namespace FileTrackingAndProcessingServices.Tests.Services
 {
     /// <summary>
     /// FileTrackingService'in sorgulama davranışı. Her test boş bir tabloyla
-    /// başlar (xUnit her test için sınıfı yeniden oluşturur ve VeritabaniOrtami
+    /// başlar (xUnit her test için sınıfı yeniden oluşturur ve TestDatabase
     /// tabloyu boşaltır), bu yüzden testler birbirinin verisini görmez.
     /// Sorgular gerçek bir PostgreSQL'e karşı koşar.
     /// </summary>
-    [Collection(VeritabaniKoleksiyonu.Ad)]
+    [Collection(DatabaseCollection.Name)]
     public class FileTrackingServiceTests : IDisposable
     {
-        private readonly VeritabaniOrtami _ortam;
+        private readonly TestDatabase _db;
         private readonly FileTrackingService _service;
 
-        public FileTrackingServiceTests(PostgreSqlSunucusu sunucu)
+        public FileTrackingServiceTests(PostgreSqlContainerFixture fixture)
         {
-            _ortam = new VeritabaniOrtami(sunucu);
-            _service = new FileTrackingService(_ortam.Context);
+            _db = new TestDatabase(fixture);
+            _service = new FileTrackingService(_db.Context);
         }
 
-        public void Dispose() => _ortam.Dispose();
+        public void Dispose() => _db.Dispose();
 
-        private void YirmiBesKayitEkle()
+        // Sayı adın içinde: sayfalama testleri 25 kaydın 10'luk sayfalara
+        // 3 sayfa olarak bölünmesine dayanıyor, bu yüzden çağrı yerinde
+        // kaç kayıt olduğu görünmeli.
+        private void SeedTwentyFiveFiles()
         {
-            var kayitlar = Enumerable.Range(1, 25)
-                .Select(i => VeritabaniOrtami.Dosya($"dosya-{i:00}.txt", sizeBytes: i * 10))
+            var files = Enumerable.Range(1, 25)
+                .Select(i => TestDatabase.CreateTrackedFile($"dosya-{i:00}.txt", sizeBytes: i * 10))
                 .ToArray();
 
-            _ortam.Ekle(kayitlar);
+            _db.Seed(files);
         }
 
         // ---------- GetAllFilesAsync: sayfalama ----------
 
         [Fact]
-        public async Task GetAllFiles_VarsayilanParametreler_IlkOnKaydiDoner()
+        public async Task GetAllFiles_DefaultParameters_ReturnsFirstTen()
         {
-            YirmiBesKayitEkle();
+            SeedTwentyFiveFiles();
 
-            var sonuc = await _service.GetAllFilesAsync(new FileQueryParameters());
+            var result = await _service.GetAllFilesAsync(new FileQueryParameters());
 
-            Assert.Equal(10, sonuc.Items.Count);
-            Assert.Equal(25, sonuc.TotalCount);
-            Assert.Equal(1, sonuc.Page);
-            Assert.Equal(3, sonuc.TotalPages);
-            Assert.False(sonuc.HasPreviousPage);
-            Assert.True(sonuc.HasNextPage);
+            Assert.Equal(10, result.Items.Count);
+            Assert.Equal(25, result.TotalCount);
+            Assert.Equal(1, result.Page);
+            Assert.Equal(3, result.TotalPages);
+            Assert.False(result.HasPreviousPage);
+            Assert.True(result.HasNextPage);
         }
 
         [Fact]
-        public async Task GetAllFiles_IkinciSayfa_SonrakiOnKaydiDoner()
+        public async Task GetAllFiles_SecondPage_ReturnsNextTen()
         {
-            YirmiBesKayitEkle();
+            SeedTwentyFiveFiles();
 
-            var sonuc = await _service.GetAllFilesAsync(
+            var result = await _service.GetAllFilesAsync(
                 new FileQueryParameters { Page = 2, PageSize = 10 });
 
-            Assert.Equal(10, sonuc.Items.Count);
-            Assert.Equal("dosya-11.txt", sonuc.Items.First().FileName);
-            Assert.Equal("dosya-20.txt", sonuc.Items.Last().FileName);
-            Assert.True(sonuc.HasPreviousPage);
+            Assert.Equal(10, result.Items.Count);
+            Assert.Equal("dosya-11.txt", result.Items.First().FileName);
+            Assert.Equal("dosya-20.txt", result.Items.Last().FileName);
+            Assert.True(result.HasPreviousPage);
         }
 
         [Fact]
-        public async Task GetAllFiles_SonSayfa_KalanKayitlariDoner()
+        public async Task GetAllFiles_LastPage_ReturnsRemaining()
         {
-            YirmiBesKayitEkle();
+            SeedTwentyFiveFiles();
 
-            var sonuc = await _service.GetAllFilesAsync(
+            var result = await _service.GetAllFilesAsync(
                 new FileQueryParameters { Page = 3, PageSize = 10 });
 
-            Assert.Equal(5, sonuc.Items.Count);   // 25 kayıttan geriye kalan
-            Assert.False(sonuc.HasNextPage);
+            Assert.Equal(5, result.Items.Count);   // 25 kayıttan geriye kalan
+            Assert.False(result.HasNextPage);
         }
 
         [Fact]
-        public async Task GetAllFiles_VarOlmayanSayfa_BosListeDonerAmaToplamDogru()
+        public async Task GetAllFiles_PageBeyondEnd_ReturnsEmptyListWithCorrectTotal()
         {
-            YirmiBesKayitEkle();
+            SeedTwentyFiveFiles();
 
-            var sonuc = await _service.GetAllFilesAsync(
+            var result = await _service.GetAllFilesAsync(
                 new FileQueryParameters { Page = 99, PageSize = 10 });
 
-            Assert.Empty(sonuc.Items);
-            Assert.Equal(25, sonuc.TotalCount);   // toplam bilgisi kaybolmamalı
+            Assert.Empty(result.Items);
+            Assert.Equal(25, result.TotalCount);   // toplam bilgisi kaybolmamalı
         }
 
         [Fact]
-        public async Task GetAllFiles_TumSayfalarBirlestirildiginde_HicbirKayitTekrarlamaz()
+        public async Task GetAllFiles_AllPagesCombined_NoRecordRepeats()
         {
             // Sıralamada eşitlik varsa aynı kayıt iki sayfada görünebilir.
             // Servis bunu ThenBy(Id) ile engelliyor; burada aynı FileName'e sahip
             // kayıtlarla o güvence sınanıyor.
-            var kayitlar = Enumerable.Range(1, 15)
-                .Select(_ => VeritabaniOrtami.Dosya("ayni-isim.txt"))
+            var files = Enumerable.Range(1, 15)
+                .Select(_ => TestDatabase.CreateTrackedFile("ayni-isim.txt"))
                 .ToArray();
-            _ortam.Ekle(kayitlar);
+            _db.Seed(files);
 
-            var toplananIdler = new List<int>();
-            for (int sayfa = 1; sayfa <= 3; sayfa++)
+            var seenIds = new List<int>();
+            for (int page = 1; page <= 3; page++)
             {
-                var sonuc = await _service.GetAllFilesAsync(new FileQueryParameters
+                var result = await _service.GetAllFilesAsync(new FileQueryParameters
                 {
-                    Page = sayfa,
+                    Page = page,
                     PageSize = 5,
                     SortBy = "fileName"
                 });
-                toplananIdler.AddRange(sonuc.Items.Select(f => f.Id));
+                seenIds.AddRange(result.Items.Select(f => f.Id));
             }
 
-            Assert.Equal(15, toplananIdler.Count);
-            Assert.Equal(15, toplananIdler.Distinct().Count());
+            Assert.Equal(15, seenIds.Count);
+            Assert.Equal(15, seenIds.Distinct().Count());
         }
 
         [Fact]
-        public async Task GetAllFiles_KayitYoksa_BosSonucDoner()
+        public async Task GetAllFiles_NoRecords_ReturnsEmptyResult()
         {
-            var sonuc = await _service.GetAllFilesAsync(new FileQueryParameters());
+            var result = await _service.GetAllFilesAsync(new FileQueryParameters());
 
-            Assert.Empty(sonuc.Items);
-            Assert.Equal(0, sonuc.TotalCount);
-            Assert.Equal(0, sonuc.TotalPages);
+            Assert.Empty(result.Items);
+            Assert.Equal(0, result.TotalCount);
+            Assert.Equal(0, result.TotalPages);
         }
 
         // ---------- GetAllFilesAsync: sıralama ----------
 
         [Fact]
-        public async Task GetAllFiles_IsmeGoreArtan_AlfabetikSiralar()
+        public async Task GetAllFiles_SortByNameAscending_ReturnsAlphabetical()
         {
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("cccc.txt"),
-                VeritabaniOrtami.Dosya("aaaa.txt"),
-                VeritabaniOrtami.Dosya("bbbb.txt"));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("cccc.txt"),
+                TestDatabase.CreateTrackedFile("aaaa.txt"),
+                TestDatabase.CreateTrackedFile("bbbb.txt"));
 
-            var sonuc = await _service.GetAllFilesAsync(
+            var result = await _service.GetAllFilesAsync(
                 new FileQueryParameters { SortBy = "fileName", SortOrder = "asc" });
 
             Assert.Equal(
                 new[] { "aaaa.txt", "bbbb.txt", "cccc.txt" },
-                sonuc.Items.Select(f => f.FileName));
+                result.Items.Select(f => f.FileName));
         }
 
         [Fact]
-        public async Task GetAllFiles_BoyutaGoreAzalan_BuyuktenKucugeSiralar()
+        public async Task GetAllFiles_SortBySizeDescending_ReturnsLargestFirst()
         {
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("kucuk.txt", sizeBytes: 10),
-                VeritabaniOrtami.Dosya("buyuk.txt", sizeBytes: 5000),
-                VeritabaniOrtami.Dosya("orta.txt", sizeBytes: 300));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("kucuk.txt", sizeBytes: 10),
+                TestDatabase.CreateTrackedFile("buyuk.txt", sizeBytes: 5000),
+                TestDatabase.CreateTrackedFile("orta.txt", sizeBytes: 300));
 
-            var sonuc = await _service.GetAllFilesAsync(
+            var result = await _service.GetAllFilesAsync(
                 new FileQueryParameters { SortBy = "sizeBytes", SortOrder = "desc" });
 
             Assert.Equal(
                 new long[] { 5000, 300, 10 },
-                sonuc.Items.Select(f => f.SizeBytes));
+                result.Items.Select(f => f.SizeBytes));
         }
 
         [Theory]
         [InlineData("FILENAME")]   // büyük harf de kabul edilmeli
         [InlineData("fileName")]
         [InlineData("filename")]
-        public async Task GetAllFiles_SortByBuyukKucukHarfDuyarsiz(string sortBy)
+        public async Task GetAllFiles_SortByIsCaseInsensitive(string sortBy)
         {
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("bbbb.txt"),
-                VeritabaniOrtami.Dosya("aaaa.txt"));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("bbbb.txt"),
+                TestDatabase.CreateTrackedFile("aaaa.txt"));
 
-            var sonuc = await _service.GetAllFilesAsync(
+            var result = await _service.GetAllFilesAsync(
                 new FileQueryParameters { SortBy = sortBy });
 
-            Assert.Equal("aaaa.txt", sonuc.Items.First().FileName);
+            Assert.Equal("aaaa.txt", result.Items.First().FileName);
         }
 
         [Theory]
         [InlineData("bilinmeyenAlan")]
         [InlineData("")]
         [InlineData("id")]
-        public async Task GetAllFiles_TaninmayanSortBy_IdSiralamasinaDuser(string sortBy)
+        public async Task GetAllFiles_UnknownSortBy_FallsBackToId(string sortBy)
         {
             // Beyaz liste dışındaki değerler sorguya konmaz, Id'ye düşer.
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("cccc.txt"),
-                VeritabaniOrtami.Dosya("aaaa.txt"),
-                VeritabaniOrtami.Dosya("bbbb.txt"));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("cccc.txt"),
+                TestDatabase.CreateTrackedFile("aaaa.txt"),
+                TestDatabase.CreateTrackedFile("bbbb.txt"));
 
-            var sonuc = await _service.GetAllFilesAsync(
+            var result = await _service.GetAllFilesAsync(
                 new FileQueryParameters { SortBy = sortBy });
 
             // Ekleme sırası korunur (Id artan)
             Assert.Equal(
                 new[] { "cccc.txt", "aaaa.txt", "bbbb.txt" },
-                sonuc.Items.Select(f => f.FileName));
+                result.Items.Select(f => f.FileName));
         }
 
         // ---------- GetByIdAsync ----------
 
         [Fact]
-        public async Task GetById_KayitVarsa_DonerVeAlanlariDogrudur()
+        public async Task GetById_ExistingRecord_ReturnsFileWithCorrectFields()
         {
-            _ortam.Ekle(VeritabaniOrtami.Dosya("rapor.pdf", extension: ".pdf", sizeBytes: 2048));
-            var eklenen = _ortam.Context.TrackedFiles.First();
+            _db.Seed(TestDatabase.CreateTrackedFile("rapor.pdf", extension: ".pdf", sizeBytes: 2048));
+            var savedFile = _db.Context.TrackedFiles.First();
 
-            var sonuc = await _service.GetByIdAsync(eklenen.Id);
+            var result = await _service.GetByIdAsync(savedFile.Id);
 
-            Assert.NotNull(sonuc);
-            Assert.Equal("rapor.pdf", sonuc!.FileName);
-            Assert.Equal(".pdf", sonuc.Extension);
-            Assert.Equal(2048, sonuc.SizeBytes);
+            Assert.NotNull(result);
+            Assert.Equal("rapor.pdf", result!.FileName);
+            Assert.Equal(".pdf", result.Extension);
+            Assert.Equal(2048, result.SizeBytes);
         }
 
         [Fact]
-        public async Task GetById_KayitYoksa_NullDoner()
+        public async Task GetById_MissingRecord_ReturnsNull()
         {
-            _ortam.Ekle(VeritabaniOrtami.Dosya("var.txt"));
+            _db.Seed(TestDatabase.CreateTrackedFile("var.txt"));
 
-            var sonuc = await _service.GetByIdAsync(99999);
+            var result = await _service.GetByIdAsync(99999);
 
-            Assert.Null(sonuc);
+            Assert.Null(result);
         }
 
         // ---------- SearchByExtensionAsync ----------
 
         [Fact]
-        public async Task Search_EslesenUzanti_SadeceOnlariDoner()
+        public async Task Search_MatchingExtension_ReturnsOnlyThose()
         {
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("a.txt", extension: ".txt"),
-                VeritabaniOrtami.Dosya("b.pdf", extension: ".pdf"),
-                VeritabaniOrtami.Dosya("c.txt", extension: ".txt"));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("a.txt", extension: ".txt"),
+                TestDatabase.CreateTrackedFile("b.pdf", extension: ".pdf"),
+                TestDatabase.CreateTrackedFile("c.txt", extension: ".txt"));
 
-            var sonuc = await _service.SearchByExtensionAsync(".txt");
+            var result = await _service.SearchByExtensionAsync(".txt");
 
-            Assert.Equal(2, sonuc.Count);
-            Assert.All(sonuc, f => Assert.Equal(".txt", f.Extension));
+            Assert.Equal(2, result.Count);
+            Assert.All(result, f => Assert.Equal(".txt", f.Extension));
         }
 
         [Fact]
-        public async Task Search_EslesmeYoksa_BosListeDoner()
+        public async Task Search_NoMatch_ReturnsEmptyList()
         {
-            _ortam.Ekle(VeritabaniOrtami.Dosya("a.txt", extension: ".txt"));
+            _db.Seed(TestDatabase.CreateTrackedFile("a.txt", extension: ".txt"));
 
-            var sonuc = await _service.SearchByExtensionAsync(".docx");
+            var result = await _service.SearchByExtensionAsync(".docx");
 
-            Assert.Empty(sonuc);   // null değil, boş liste
+            Assert.Empty(result);   // null değil, boş liste
         }
 
         [Theory]
         [InlineData(".TXT", ".txt")]   // diskte büyük, aranan küçük
         [InlineData(".txt", ".TXT")]   // diskte küçük, aranan büyük
         [InlineData(".TxT", ".tXt")]   // ikisi de karışık
-        public async Task Search_BuyukKucukHarfFarki_YineDeEslesir(
-            string kayitliUzanti, string aranan)
+        public async Task Search_DifferentCasing_StillMatches(
+            string storedExtension, string searchTerm)
         {
             // Tarayıcı uzantıyı diskteki haliyle kaydediyor: "BELGE.TXT" -> ".TXT".
             // Kullanıcının aramada aynı harf düzenini tutturmak zorunda olmaması
             // gerekir.
-            _ortam.Ekle(VeritabaniOrtami.Dosya("belge", extension: kayitliUzanti));
+            _db.Seed(TestDatabase.CreateTrackedFile("belge", extension: storedExtension));
 
-            var sonuc = await _service.SearchByExtensionAsync(aranan);
+            var result = await _service.SearchByExtensionAsync(searchTerm);
 
-            Assert.Single(sonuc);
+            Assert.Single(result);
         }
 
         [Theory]
         [InlineData(".TIF", ".tif")]
         [InlineData(".tif", ".TIF")]
-        public async Task Search_IHarfiIcerenUzanti_MakineKulturundenEtkilenmez(
-            string kayitliUzanti, string aranan)
+        public async Task Search_ExtensionContainingLetterI_IsCultureIndependent(
+            string storedExtension, string searchTerm)
         {
             // Türkçe kültürde ToLower() 'I' harfini 'ı'ya çevirir; bu da
             // veritabanındaki lower() sonucuyla ('i') uyuşmaz. Servis bu yüzden
             // aranan değeri ToLowerInvariant() ile küçültüyor. Bu test, makinenin
             // kültür ayarı ne olursa olsun eşleşmenin bozulmadığını güvenceye alır.
-            _ortam.Ekle(VeritabaniOrtami.Dosya("resim", extension: kayitliUzanti));
+            _db.Seed(TestDatabase.CreateTrackedFile("resim", extension: storedExtension));
 
-            var sonuc = await _service.SearchByExtensionAsync(aranan);
+            var result = await _service.SearchByExtensionAsync(searchTerm);
 
-            Assert.Single(sonuc);
+            Assert.Single(result);
         }
 
         [Fact]
-        public async Task Search_HarfDuyarsizlik_YanlisUzantilariGetirmez()
+        public async Task Search_CaseInsensitivity_DoesNotReturnWrongExtensions()
         {
             // Duyarsızlık, alakasız uzantıların da gelmesi anlamına gelmemeli.
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("a", extension: ".TXT"),
-                VeritabaniOrtami.Dosya("b", extension: ".txt"),
-                VeritabaniOrtami.Dosya("c", extension: ".pdf"),
-                VeritabaniOrtami.Dosya("d", extension: ".txtx"));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("a", extension: ".TXT"),
+                TestDatabase.CreateTrackedFile("b", extension: ".txt"),
+                TestDatabase.CreateTrackedFile("c", extension: ".pdf"),
+                TestDatabase.CreateTrackedFile("d", extension: ".txtx"));
 
-            var sonuc = await _service.SearchByExtensionAsync(".txt");
+            var result = await _service.SearchByExtensionAsync(".txt");
 
-            Assert.Equal(2, sonuc.Count);
-            Assert.All(sonuc, f => Assert.Equal(".txt", f.Extension.ToLowerInvariant()));
+            Assert.Equal(2, result.Count);
+            Assert.All(result, f => Assert.Equal(".txt", f.Extension.ToLowerInvariant()));
         }
 
         [Theory]
@@ -303,148 +306,148 @@ namespace FileTrackingAndProcessingServices.Tests.Services
         [InlineData(".pdf")]    // noktalı yazım
         [InlineData("PDF")]     // noktasız ve büyük harf
         [InlineData(" pdf ")]   // adres çubuğundan gelen boşluklar
-        public async Task Search_UzantiNoktasizYazilsaDaEslesir(string aranan)
+        public async Task Search_ExtensionWithoutLeadingDot_StillMatches(string searchTerm)
         {
             // Tarayıcı uzantıyı FileInfo.Extension'dan alıyor ve o değer her zaman
             // noktayla başlıyor (".pdf"). Kullanıcı ise doğal olarak "pdf" yazar.
             // Nokta eklenmeseydi bu arama boş liste dönerdi — hata da vermeden,
             // "böyle dosya yok" görüntüsünün arkasına saklanarak.
-            _ortam.Ekle(VeritabaniOrtami.Dosya("rapor", extension: ".pdf"));
+            _db.Seed(TestDatabase.CreateTrackedFile("rapor", extension: ".pdf"));
 
-            var sonuc = await _service.SearchByExtensionAsync(aranan);
+            var result = await _service.SearchByExtensionAsync(searchTerm);
 
-            Assert.Single(sonuc);
+            Assert.Single(result);
         }
 
         [Theory]
         [InlineData("")]
         [InlineData("   ")]
-        public async Task Search_BosUzanti_BosListeDoner(string aranan)
+        public async Task Search_EmptyExtension_ReturnsEmptyList(string searchTerm)
         {
             // Boş arama çökmemeli. Hiçbir uzantı boş olmadığı için doğru cevap
             // boş listedir; servis bu durumda veritabanına hiç gitmiyor.
-            _ortam.Ekle(VeritabaniOrtami.Dosya("rapor", extension: ".pdf"));
+            _db.Seed(TestDatabase.CreateTrackedFile("rapor", extension: ".pdf"));
 
-            var sonuc = await _service.SearchByExtensionAsync(aranan);
+            var result = await _service.SearchByExtensionAsync(searchTerm);
 
-            Assert.Empty(sonuc);
+            Assert.Empty(result);
         }
 
         [Fact]
-        public async Task Search_NoktasizArama_YanlisUzantilariGetirmez()
+        public async Task Search_WithoutLeadingDot_DoesNotReturnWrongExtensions()
         {
             // Nokta eklemek eşleşmeyi gevşetmemeli: "pdf" araması ".pdf" bulmalı,
             // ama ".pdfx" ya da uzantısı ".pd" olanları getirmemeli.
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("a", extension: ".pdf"),
-                VeritabaniOrtami.Dosya("b", extension: ".pdfx"),
-                VeritabaniOrtami.Dosya("c", extension: ".pd"));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("a", extension: ".pdf"),
+                TestDatabase.CreateTrackedFile("b", extension: ".pdfx"),
+                TestDatabase.CreateTrackedFile("c", extension: ".pd"));
 
-            var sonuc = await _service.SearchByExtensionAsync("pdf");
+            var result = await _service.SearchByExtensionAsync("pdf");
 
-            Assert.Single(sonuc);
-            Assert.Equal(".pdf", sonuc[0].Extension);
+            Assert.Single(result);
+            Assert.Equal(".pdf", result[0].Extension);
         }
 
         // ---------- GetDuplicatesAsync ----------
 
         [Fact]
-        public async Task GetDuplicates_AyniHashliIkiKayit_TekGrupOlarakDoner()
+        public async Task GetDuplicates_TwoRecordsSameHash_ReturnsSingleGroup()
         {
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("kopya-a.txt", hash: "aaa", sizeBytes: 24),
-                VeritabaniOrtami.Dosya("kopya-b.txt", hash: "aaa", sizeBytes: 24));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("kopya-a.txt", hash: "aaa", sizeBytes: 24),
+                TestDatabase.CreateTrackedFile("kopya-b.txt", hash: "aaa", sizeBytes: 24));
 
-            var sonuc = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync();
 
-            var grup = Assert.Single(sonuc);
-            Assert.Equal("aaa", grup.Hash);
-            Assert.Equal(2, grup.Count);
-            Assert.Equal(24, grup.SizeBytes);
-            Assert.Equal(24, grup.WastedBytes);   // tek kopya bırakılsa 24 bayt kazanılır
-            Assert.Equal(2, grup.Files.Count);
+            var group = Assert.Single(result);
+            Assert.Equal("aaa", group.Hash);
+            Assert.Equal(2, group.Count);
+            Assert.Equal(24, group.SizeBytes);
+            Assert.Equal(24, group.WastedBytes);   // tek kopya bırakılsa 24 bayt kazanılır
+            Assert.Equal(2, group.Files.Count);
         }
 
         [Fact]
-        public async Task GetDuplicates_TekilKayit_GrubaGirmez()
+        public async Task GetDuplicates_UniqueRecord_NotGrouped()
         {
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("kopya-a.txt", hash: "aaa"),
-                VeritabaniOrtami.Dosya("kopya-b.txt", hash: "aaa"),
-                VeritabaniOrtami.Dosya("tekil-c.txt", hash: "ccc"));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("kopya-a.txt", hash: "aaa"),
+                TestDatabase.CreateTrackedFile("kopya-b.txt", hash: "aaa"),
+                TestDatabase.CreateTrackedFile("tekil-c.txt", hash: "ccc"));
 
-            var sonuc = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync();
 
-            var grup = Assert.Single(sonuc);
-            Assert.DoesNotContain(grup.Files, f => f.FileName == "tekil-c.txt");
+            var group = Assert.Single(result);
+            Assert.DoesNotContain(group.Files, f => f.FileName == "tekil-c.txt");
         }
 
         [Fact]
-        public async Task GetDuplicates_UcKopya_IkiKopyalikIsrafHesaplar()
+        public async Task GetDuplicates_ThreeCopies_CountsTwoAsWasted()
         {
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("a.txt", hash: "aaa", sizeBytes: 500),
-                VeritabaniOrtami.Dosya("b.txt", hash: "aaa", sizeBytes: 500),
-                VeritabaniOrtami.Dosya("c.txt", hash: "aaa", sizeBytes: 500));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("a.txt", hash: "aaa", sizeBytes: 500),
+                TestDatabase.CreateTrackedFile("b.txt", hash: "aaa", sizeBytes: 500),
+                TestDatabase.CreateTrackedFile("c.txt", hash: "aaa", sizeBytes: 500));
 
-            var sonuc = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync();
 
-            var grup = Assert.Single(sonuc);
-            Assert.Equal(3, grup.Count);
-            Assert.Equal(1000, grup.WastedBytes);   // 500 * (3 - 1)
+            var group = Assert.Single(result);
+            Assert.Equal(3, group.Count);
+            Assert.Equal(1000, group.WastedBytes);   // 500 * (3 - 1)
         }
 
         [Fact]
-        public async Task GetDuplicates_HashiBosOlanlar_KopyaSayilmaz()
+        public async Task GetDuplicates_EmptyHash_NotCountedAsDuplicate()
         {
             // Boş hash "henüz hesaplanmadı" demek; "içerikleri aynı" demek değil.
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("a.txt", hash: ""),
-                VeritabaniOrtami.Dosya("b.txt", hash: ""),
-                VeritabaniOrtami.Dosya("c.txt", hash: ""));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("a.txt", hash: ""),
+                TestDatabase.CreateTrackedFile("b.txt", hash: ""),
+                TestDatabase.CreateTrackedFile("c.txt", hash: ""));
 
-            var sonuc = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync();
 
-            Assert.Empty(sonuc);
+            Assert.Empty(result);
         }
 
         [Fact]
-        public async Task GetDuplicates_BirdenFazlaGrup_EnCokIsrafEdenBastaGelir()
+        public async Task GetDuplicates_MultipleGroups_MostWastedFirst()
         {
-            _ortam.Ekle(
+            _db.Seed(
                 // küçük grup: 10 bayt israf
-                VeritabaniOrtami.Dosya("kucuk-1.txt", hash: "kkk", sizeBytes: 10),
-                VeritabaniOrtami.Dosya("kucuk-2.txt", hash: "kkk", sizeBytes: 10),
+                TestDatabase.CreateTrackedFile("kucuk-1.txt", hash: "kkk", sizeBytes: 10),
+                TestDatabase.CreateTrackedFile("kucuk-2.txt", hash: "kkk", sizeBytes: 10),
                 // büyük grup: 9000 bayt israf
-                VeritabaniOrtami.Dosya("buyuk-1.bin", hash: "bbb", sizeBytes: 9000),
-                VeritabaniOrtami.Dosya("buyuk-2.bin", hash: "bbb", sizeBytes: 9000));
+                TestDatabase.CreateTrackedFile("buyuk-1.bin", hash: "bbb", sizeBytes: 9000),
+                TestDatabase.CreateTrackedFile("buyuk-2.bin", hash: "bbb", sizeBytes: 9000));
 
-            var sonuc = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync();
 
-            Assert.Equal(2, sonuc.Count);
-            Assert.Equal("bbb", sonuc[0].Hash);
-            Assert.Equal(9000, sonuc[0].WastedBytes);
-            Assert.Equal(10, sonuc[1].WastedBytes);
+            Assert.Equal(2, result.Count);
+            Assert.Equal("bbb", result[0].Hash);
+            Assert.Equal(9000, result[0].WastedBytes);
+            Assert.Equal(10, result[1].WastedBytes);
         }
 
         [Fact]
-        public async Task GetDuplicates_HicKopyaYoksa_BosListeDoner()
+        public async Task GetDuplicates_NoDuplicates_ReturnsEmptyList()
         {
-            _ortam.Ekle(
-                VeritabaniOrtami.Dosya("a.txt", hash: "aaa"),
-                VeritabaniOrtami.Dosya("b.txt", hash: "bbb"));
+            _db.Seed(
+                TestDatabase.CreateTrackedFile("a.txt", hash: "aaa"),
+                TestDatabase.CreateTrackedFile("b.txt", hash: "bbb"));
 
-            var sonuc = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync();
 
-            Assert.Empty(sonuc);
+            Assert.Empty(result);
         }
 
         [Fact]
-        public async Task GetDuplicates_VeritabaniBossa_BosListeDoner()
+        public async Task GetDuplicates_EmptyDatabase_ReturnsEmptyList()
         {
-            var sonuc = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync();
 
-            Assert.Empty(sonuc);
+            Assert.Empty(result);
         }
     }
 }

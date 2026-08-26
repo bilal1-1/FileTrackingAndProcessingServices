@@ -6,14 +6,17 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
     /// dosya sistemi yerine gerçek ama izole bir klasör kullanılıyor: her test
     /// kendi klasörünü alır, testler birbirinin dosyalarını görmez.
     /// </summary>
-    public sealed class GeciciKlasor : IDisposable
+    public sealed class TempFolder : IDisposable
     {
-        public string Yol { get; }
+        // Property adı bilinçli olarak "Path" DEĞİL: bu sınıfın içinde
+        // System.IO.Path kullanılıyor (Path.Combine, Path.GetTempPath) ve
+        // "Path" adlı bir üye tip adını gölgeleyip derlemeyi kırardı.
+        public string FullPath { get; }
 
-        public GeciciKlasor()
+        public TempFolder()
         {
-            Yol = Path.Combine(Path.GetTempPath(), "dosyatakip-test-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Yol);
+            FullPath = Path.Combine(Path.GetTempPath(), "dosyatakip-test-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(FullPath);
         }
 
         /// <summary>
@@ -22,27 +25,27 @@ namespace FileTrackingAndProcessingServices.Tests.TestHelpers
         /// beklenen değerle karşılaştırılabilmesi için baytların tam olarak
         /// bilinmesi gerekiyor.
         /// </summary>
-        public string DosyaYaz(string dosyaAdi, string icerik)
+        public string WriteFile(string fileName, string content)
         {
-            var tamYol = Path.Combine(Yol, dosyaAdi);
-            File.WriteAllText(tamYol, icerik, new System.Text.UTF8Encoding(false));
-            return tamYol;
+            var fullPath = Path.Combine(FullPath, fileName);
+            File.WriteAllText(fullPath, content, new System.Text.UTF8Encoding(false));
+            return fullPath;
         }
 
-        public string AltKlasorOlustur(string ad)
+        public string CreateSubFolder(string name)
         {
-            var yol = Path.Combine(Yol, ad);
-            Directory.CreateDirectory(yol);
-            return yol;
+            var path = Path.Combine(FullPath, name);
+            Directory.CreateDirectory(path);
+            return path;
         }
 
         public void Dispose()
         {
             try
             {
-                if (Directory.Exists(Yol))
+                if (Directory.Exists(FullPath))
                 {
-                    Directory.Delete(Yol, recursive: true);
+                    Directory.Delete(FullPath, recursive: true);
                 }
             }
             catch (IOException)
