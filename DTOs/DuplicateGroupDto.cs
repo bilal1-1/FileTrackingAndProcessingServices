@@ -1,10 +1,15 @@
-namespace FileTrackingAndProcessingServices.Models
+namespace FileTrackingAndProcessingServices.DTOs
 {
     /// <summary>
     /// Aynı SHA-256 parmak izine sahip, yani içeriği birebir aynı olan
     /// dosyaların oluşturduğu grup.
+    ///
+    /// Eski Models/DuplicateGroup sınıfının yerini aldı. O sınıf zaten bir
+    /// veritabanı tablosu değildi (DbContext'te karşılığı yok), sadece cevap
+    /// şekliydi; ama içinde entity listesi (List&lt;TrackedFile&gt;) taşıdığı için
+    /// tabloyu yine de dışarı sızdırıyordu. Artık DTO listesi taşıyor.
     /// </summary>
-    public class DuplicateGroup
+    public class DuplicateGroupDto
     {
         /// <summary>Gruptaki tüm dosyaların ortak hash değeri.</summary>
         public string Hash { get; set; } = string.Empty;
@@ -21,6 +26,6 @@ namespace FileTrackingAndProcessingServices.Models
         /// </summary>
         public long WastedBytes { get; set; }
 
-        public List<TrackedFile> Files { get; set; } = new();
+        public List<TrackedFileDto> Files { get; set; } = new();
     }
 }
