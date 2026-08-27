@@ -1,62 +1,26 @@
 using FileTrackingAndProcessingServices.DTOs;
 using FileTrackingAndProcessingServices.Mapping;
 using FileTrackingAndProcessingServices.Models;
-using FileTrackingAndProcessingServices.Data;
-using Microsoft.EntityFrameworkCore;
+using FileTrackingAndProcessingServices.Repositories;
 
 namespace FileTrackingAndProcessingServices.Services
 {
+    /// <summary>
+    /// Sorgulama uçlarının iş katmanı. Artık DbContext'i tanımıyor: veritabanına
+    /// nasıl gidileceği repository'nin, dışarıya ne verileceği bu sınıfın işi.
+    /// </summary>
     public class FileTrackingService : IFileTrackingService
     {
-        private readonly AppDbContext _context;
+        private readonly IFileRepository _repository;
 
-        public FileTrackingService(AppDbContext context)
+        public FileTrackingService(IFileRepository repository)
         {
-            _context = context;
+            _repository = repository;
         }
 
         public async Task<PagedResult<TrackedFileDto>> GetAllFilesAsync(FileQueryParameters parameters) // Tüm dosyaları sayfalı getirir (filtreleme/sıralama parametreleri ile)
         {
-            var query = _context.TrackedFiles.AsQueryable(); // IQueryable, LINQ sorgularının veritabanına çevrilmesini sağlar.
-
-            bool descending = parameters.SortOrder // DESC veya ASC parametresi için
-                .Equals("desc", StringComparison.OrdinalIgnoreCase);
-
-            // Sıralanabilir alanlar beyaz liste ile sınırlı: istemciden gelen
-            // metin doğrudan sorguya konmaz, sadece bilinen alanlara eşlenir.
-            IOrderedQueryable<TrackedFile> ordered = parameters.SortBy.ToLowerInvariant() switch
-            {
-                "filename" => descending
-                    ? query.OrderByDescending(f => f.FileName)
-                    : query.OrderBy(f => f.FileName),
-                "extension" => descending
-                    ? query.OrderByDescending(f => f.Extension)
-                    : query.OrderBy(f => f.Extension),
-                "sizebytes" => descending
-                    ? query.OrderByDescending(f => f.SizeBytes)
-                    : query.OrderBy(f => f.SizeBytes),
-                "createdat" => descending
-                    ? query.OrderByDescending(f => f.CreatedAt)
-                    : query.OrderBy(f => f.CreatedAt),
-                "modifiedat" => descending
-                    ? query.OrderByDescending(f => f.ModifiedAt)
-                    : query.OrderBy(f => f.ModifiedAt),
-                _ => descending
-                    ? query.OrderByDescending(f => f.Id)
-                    : query.OrderBy(f => f.Id)
-            };
-
-            // Eşit değerlerde sıra rastgele kalmasın diye ikincil sıralama.
-            // eşit değerlerde her zaman Id'ye göre sırala, tutarlı ol.
-            query = ordered.ThenBy(f => f.Id);
-
-            // Toplam sayı, sayfalama uygulanmadan önce hesaplanır.
-            int totalCount = await query.CountAsync();
-
-            var items = await query // sayfalamayı yapar
-                .Skip((parameters.Page - 1) * parameters.PageSize)
-                .Take(parameters.PageSize)
-                .ToListAsync();
+            var (items, totalCount) = await _repository.GetPagedAsync(parameters);
 
             return new PagedResult<TrackedFileDto>
             {
@@ -66,15 +30,16 @@ namespace FileTrackingAndProcessingServices.Services
                 TotalCount = totalCount // Toplam dosya sayısı
             };
         }
+
         // Verilen ID'ye sahip dosyayı getirir; bulunamazsa null döner.
         public async Task<TrackedFileDto?> GetByIdAsync(int id)
         {
-            // FirstOrDefaultAsync: eşleşen ilk kaydı döndürür, yoksa null.
-            var file = await _context.TrackedFiles.FirstOrDefaultAsync(f => f.Id == id);
+            var file = await _repository.GetByIdAsync(id);
 
             // Kayıt yoksa null dönmeye devam ediyoruz; controller bunu 404'e çeviriyor.
             return file?.ToDto();
         }
+
         // Verilen uzantıya (.pdf, .docx vb.) sahip tüm dosyaları arar.
         public async Task<List<TrackedFileDto>> SearchByExtensionAsync(string extension)
         {
@@ -87,18 +52,17 @@ namespace FileTrackingAndProcessingServices.Services
                 return new List<TrackedFileDto>();
             }
 
-            // Karşılaştırmanın kolon tarafındaki ToLower() SQL'e lower() olarak
-            // çevrilir; karşılaştırma veritabanında yapılır, tüm tablo belleğe
-            // çekilmez.
-            var files = await _context.TrackedFiles
-                .Where(f => f.Extension.ToLower() == normalizedExtension)
-                .ToListAsync();
+            var files = await _repository.GetByExtensionAsync(normalizedExtension);
 
             return files.ToDtoList();
         }
 
         /// <summary>
         /// Kullanıcının yazdığı uzantıyı, veritabanında saklanan biçime çevirir.
+        ///
+        /// Repository'ye değil serviste duruyor: bu bir kullanıcı girdisi kuralı,
+        /// veritabanı erişimiyle ilgisi yok. Repository normalleştirilmiş değeri
+        /// hazır bekliyor.
         /// </summary>
         private static string NormalizeExtension(string extension)
         {
@@ -128,32 +92,21 @@ namespace FileTrackingAndProcessingServices.Services
 
         public async Task<List<DuplicateGroupDto>> GetDuplicatesAsync()
         {
-            // 1. Önce sadece yinelenen hash değerlerini bul. Gruplama ve sayma
-            //    veritabanında yapılır (GROUP BY ... HAVING COUNT(*) > 1), satırlar
-            //    belleğe çekilmez.
-            //    Hash'i boş olan kayıtlar dışarıda bırakılır — henüz hesaplanmamış
-            //    olmaları onları birbirinin kopyası yapmaz.
-            var duplicateHashes = await _context.TrackedFiles
-                .Where(f => f.Hash != "") // boş hash'leri atla
-                .GroupBy(f => f.Hash) // aynı hash'e göre grupla
-                .Where(g => g.Count() > 1) // 1'den fazla olan gruplar = duplicate
-                .Select(g => g.Key) // sadece hash değerini al (dosyaları değil)
-                .ToListAsync(); // DB' ye git
+            // 1. Önce sadece yinelenen hash değerlerini bul.
+            var duplicateHashes = await _repository.GetDuplicateHashesAsync();
 
             if (duplicateHashes.Count == 0)
             {
                 return new List<DuplicateGroupDto>();
             }
 
-            // 2. Sadece bu hash'lere ait satırları çek. Tek sorgu (SQL IN), N+1 yok.
-            var files = await _context.TrackedFiles
-                .Where(f => duplicateHashes.Contains(f.Hash))
-                .ToListAsync();
+            // 2. Sadece bu hash'lere ait satırları çek.
+            var files = await _repository.GetByHashesAsync(duplicateHashes);
 
             // 3. Gruplara ayır. Bu aşama bellekte — elde zaten sadece yinelenen
             //    kayıtlar var, tüm tablo değil.
             return files
-                .GroupBy(f => f.Hash) 
+                .GroupBy(f => f.Hash)
                 .Select(g => new DuplicateGroupDto
                 {
                     Hash = g.Key,

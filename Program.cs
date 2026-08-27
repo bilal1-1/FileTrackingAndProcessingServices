@@ -1,6 +1,7 @@
 using FileTrackingAndProcessingServices.Data;
 using FileTrackingAndProcessingServices.Middleware;
 using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Repositories;
 using FileTrackingAndProcessingServices.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -21,6 +22,12 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(
         builder.Configuration.GetConnectionString("DefaultConnection"),
         npgsql => npgsql.EnableRetryOnFailure()));
+
+// Veri erişimi. Scoped: bir istek boyunca repository'ler ve UnitOfWork aynı
+// DbContext örneğini paylaşır — repository'ye eklenen kaydı UnitOfWork'ün
+// yazabilmesi buna bağlı.
+builder.Services.AddScoped<IFileRepository, FileRepository>();
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 builder.Services.AddScoped<IFileTrackingService, FileTrackingService>();
 builder.Services.AddScoped<IFolderScannerService, FolderScannerService>();

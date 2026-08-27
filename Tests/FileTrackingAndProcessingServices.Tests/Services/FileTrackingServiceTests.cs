@@ -1,4 +1,5 @@
 using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Repositories;
 using FileTrackingAndProcessingServices.Services;
 using FileTrackingAndProcessingServices.Tests.TestHelpers;
 
@@ -19,7 +20,11 @@ namespace FileTrackingAndProcessingServices.Tests.Services
         public FileTrackingServiceTests(PostgreSqlContainerFixture fixture)
         {
             _db = new TestDatabase(fixture);
-            _service = new FileTrackingService(_db.Context);
+
+            // Servis artık DbContext değil repository alıyor. Testler yine gerçek
+            // repository ile koşuyor (sahte değil): amaç sorguların PostgreSQL'de
+            // gerçekten çalıştığını doğrulamak.
+            _service = new FileTrackingService(new FileRepository(_db.Context));
         }
 
         public void Dispose() => _db.Dispose();

@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
-using FileTrackingAndProcessingServices.Data;
 using FileTrackingAndProcessingServices.Models;
-using Microsoft.EntityFrameworkCore;
+using FileTrackingAndProcessingServices.Repositories;
 using Microsoft.Extensions.Options;
 
 namespace FileTrackingAndProcessingServices.Services
@@ -9,18 +8,21 @@ namespace FileTrackingAndProcessingServices.Services
     public class FolderScannerService : IFolderScannerService
     {
         // ADIM 1: "Bu sınıf şunlara ihtiyaç duyacak" diye ilan ediyoruz
-        private readonly AppDbContext _context; // db bağlantısını burası sağlıyor.
+        private readonly IFileRepository _repository; // db erişimini burası sağlıyor.
+        private readonly IUnitOfWork _unitOfWork; // biriken değişiklikleri burası yazıyor.
         private readonly FolderWatchSettings _settings; // klasör takip ayarlarını burası sağlıyor.
         private readonly ILogger<FolderScannerService> _logger; // log tutulmasını burası sağlıyor.
 
         // ADIM 2: .NET bu sınıfı oluştururken buraya geliyor
         // ve gerekli nesneleri dışarıdan teslim ediyor
-        public FolderScannerService( 
-            AppDbContext context,
+        public FolderScannerService(
+            IFileRepository repository,
+            IUnitOfWork unitOfWork,
             IOptions<FolderWatchSettings> options,
             ILogger<FolderScannerService> logger)
         {
-            _context = context;
+            _repository = repository;
+            _unitOfWork = unitOfWork;
             _settings = options.Value;
             _logger = logger;
         }
@@ -49,8 +51,7 @@ namespace FileTrackingAndProcessingServices.Services
 
             // 3. Kayıtlı dosyaların tamamını tek sorguda çek.
             // Böylece döngü içinde her dosya için ayrı sorgu atılmaz (N+1 önlenir).
-            var existingFiles = await _context.TrackedFiles
-                .ToDictionaryAsync(f => f.FilePath);
+            var existingFiles = await _repository.GetAllByPathAsync();
 
             int newFileCount = 0;
 
@@ -120,7 +121,7 @@ namespace FileTrackingAndProcessingServices.Services
                         ModifiedAt = file.LastWriteTimeUtc
                     };
 
-                    _context.TrackedFiles.Add(trackedFile);
+                    await _repository.AddAsync(trackedFile);
                     newFileCount++;
 
                     _logger.LogInformation("Yeni dosya işlendi: {FileName}", file.Name);
@@ -131,8 +132,10 @@ namespace FileTrackingAndProcessingServices.Services
                 }
             }
 
-            // 7. Tüm yeni kayıtları ve güncellemeleri tek seferde veritabanına yaz
-            await _context.SaveChangesAsync();
+            // 7. Tüm yeni kayıtları ve güncellemeleri tek seferde veritabanına yaz.
+            // Kaydetme anını repository değil bu servis belirliyor: döngüde biriken
+            // ekleme ve güncellemelerin hepsi tek turda yazılıyor.
+            await _unitOfWork.SaveChangesAsync();
 
             return newFileCount;
         }

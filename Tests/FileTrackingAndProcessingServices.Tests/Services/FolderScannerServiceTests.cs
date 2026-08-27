@@ -1,4 +1,5 @@
 using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Repositories;
 using FileTrackingAndProcessingServices.Services;
 using FileTrackingAndProcessingServices.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -40,8 +41,12 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 ScanIntervalSeconds = 60
             });
 
+            // Repository ve UnitOfWork AYNI DbContext'i almalı: tarayıcı
+            // repository üzerinden ekliyor, UnitOfWork üzerinden kaydediyor.
+            // Farklı context verilirse eklenen kayıtlar hiç yazılmaz.
             return new FolderScannerService(
-                _db.Context,
+                new FileRepository(_db.Context),
+                new UnitOfWork(_db.Context),
                 settings,
                 NullLogger<FolderScannerService>.Instance);
         }
@@ -257,7 +262,7 @@ namespace FileTrackingAndProcessingServices.Tests.Services
 
             await CreateScanner().ScanFolderAsync();
 
-            var trackingService = new FileTrackingService(_db.Context);
+            var trackingService = new FileTrackingService(new FileRepository(_db.Context));
             var groups = await trackingService.GetDuplicatesAsync();
 
             var group = Assert.Single(groups);
