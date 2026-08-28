@@ -1,4 +1,5 @@
-using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Application.Models;
+using FileTrackingAndProcessingServices.Domain.Entities;
 
 namespace FileTrackingAndProcessingServices.Tests.Models
 {

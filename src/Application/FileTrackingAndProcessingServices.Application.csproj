@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- İŞ KATMANI.
+       Yalnızca Domain'e referans verir. Infrastructure'ı TANIMAZ: veritabanına
+       nasıl gidileceğini bilmez, sadece "böyle bir repository olacak" diye
+       arayüzünü tanımlar (Interfaces/). O arayüzü kimin uyguladığı bu projeyi
+       ilgilendirmez — Dependency Inversion tam olarak bu.
+
+       NuGet paketi yok: burada ne EF Core ne de ASP.NET geçiyor. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FileTrackingAndProcessingServices.Application</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Domain\FileTrackingAndProcessingServices.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

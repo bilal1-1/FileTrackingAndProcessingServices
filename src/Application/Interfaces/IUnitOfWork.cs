@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.Repositories
+namespace FileTrackingAndProcessingServices.Application.Interfaces
 {
     /// <summary>
     /// Biriken değişiklikleri tek seferde veritabanına yazar.

@@ -1,9 +1,7 @@
-using FileTrackingAndProcessingServices.Data;
-using FileTrackingAndProcessingServices.Middleware;
-using FileTrackingAndProcessingServices.Models;
-using FileTrackingAndProcessingServices.Repositories;
-using FileTrackingAndProcessingServices.Services;
-using Microsoft.EntityFrameworkCore;
+using FileTrackingAndProcessingServices.Application.Services;
+using FileTrackingAndProcessingServices.Infrastructure;
+using FileTrackingAndProcessingServices.WebApi.BackgroundServices;
+using FileTrackingAndProcessingServices.WebApi.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,40 +12,27 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Bizim DI kayıtlarımız
-// PostgreSQL ayrı bir sunucu süreci; SQLite gibi "dosyayı aç, hazır" değil.
-// Uygulama ondan önce ayağa kalkabilir ya da veritabanı anlık kopabilir, bu yüzden
-// geçici bağlantı hatalarında sorgunun kendiliğinden yeniden denenmesi isteniyor.
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
-        npgsql => npgsql.EnableRetryOnFailure()));
+// --- Katmanların bağlanması (composition root) ---
+// Uygulamada somut sınıfların arayüzlere bağlandığı TEK yer burası. Controller
+// ve servisler yalnızca arayüzleri tanır, hangi sınıfın geldiğini bilmezler.
 
-// Veri erişimi. Scoped: bir istek boyunca repository'ler ve UnitOfWork aynı
-// DbContext örneğini paylaşır — repository'ye eklenen kaydı UnitOfWork'ün
-// yazabilmesi buna bağlı.
-builder.Services.AddScoped<IFileRepository, FileRepository>();
-builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+// Infrastructure kendi kayıtlarını kendi yapıyor: DbContext, repository'ler,
+// UnitOfWork, klasör tarayıcı ve WatchSettings bağlaması.
+builder.Services.AddInfrastructure(builder.Configuration);
 
+// Application katmanının tek servisi. Ayrı bir uzantı metoduna gerek görülmedi;
+// Application projesinde hiç NuGet paketi olmaması bilinçli bir tercih ve
+// IServiceCollection için paket eklemek o tercihi bozardı.
 builder.Services.AddScoped<IFileTrackingService, FileTrackingService>();
-builder.Services.AddScoped<IFolderScannerService, FolderScannerService>();
 
-builder.Services.Configure<FolderWatchSettings>(
-    builder.Configuration.GetSection("WatchSettings"));
+// Periyodik taramayı yürüten arka plan servisi. Uygulamanın çalışma ömrüne
+// bağlı olduğu için sunum katmanında duruyor.
 builder.Services.AddHostedService<FileScanBackgroundService>();
 
 var app = builder.Build();
 
 // Bekleyen migration'ları uygulama açılırken çalıştır.
-// Container içinde "dotnet ef database update" komutunu çalıştırma imkânı yok
-// (runtime imajında EF araçları bulunmaz); bu satır olmadan tablolar hiç
-// oluşmaz ve ilk sorguda relation TrackedFiles does not exist hatası alınır.
-// Yerelde de zararsız: veritabanı zaten günceldeyse hiçbir şey yapmaz.
-using (var scope = app.Services.CreateScope())
-{
-    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    dbContext.Database.Migrate();
-}
+app.Services.ApplyMigrations();
 
 // Boru hattının en dışı: altındaki her katmanın hatasını yakalar,
 // bu yüzden diğer middleware'lerden ÖNCE eklenmeli.

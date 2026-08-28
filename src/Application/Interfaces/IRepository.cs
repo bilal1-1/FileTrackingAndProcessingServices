@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.Repositories
+namespace FileTrackingAndProcessingServices.Application.Interfaces
 {
     /// <summary>
     /// Her entity için birebir aynı olan temel veritabanı işlemleri. Bir kez

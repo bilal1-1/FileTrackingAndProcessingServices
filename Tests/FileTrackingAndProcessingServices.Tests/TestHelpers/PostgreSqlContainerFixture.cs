@@ -1,4 +1,4 @@
-using FileTrackingAndProcessingServices.Data;
+using FileTrackingAndProcessingServices.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.PostgreSql;
 

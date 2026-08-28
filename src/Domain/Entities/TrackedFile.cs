@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.Models
+namespace FileTrackingAndProcessingServices.Domain.Entities
 {
     public class TrackedFile
     {

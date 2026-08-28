@@ -1,7 +1,7 @@
+using FileTrackingAndProcessingServices.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
-using FileTrackingAndProcessingServices.Models;
 
-namespace FileTrackingAndProcessingServices.Data
+namespace FileTrackingAndProcessingServices.Infrastructure.Persistence
 {
     public class AppDbContext : DbContext
     {

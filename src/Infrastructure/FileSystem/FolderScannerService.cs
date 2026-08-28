@@ -1,9 +1,11 @@
-using System.Security.Cryptography;
-using FileTrackingAndProcessingServices.Models;
-using FileTrackingAndProcessingServices.Repositories;
+using FileTrackingAndProcessingServices.Application.Interfaces;
+using FileTrackingAndProcessingServices.Application.Models;
+using FileTrackingAndProcessingServices.Domain.Entities;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
 
-namespace FileTrackingAndProcessingServices.Services
+namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
 {
     public class FolderScannerService : IFolderScannerService
     {

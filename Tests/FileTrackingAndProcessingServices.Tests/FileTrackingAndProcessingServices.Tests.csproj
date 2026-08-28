@@ -35,7 +35,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\FileTrackingAndProcessingServices.csproj" />
+    <!-- Testler entity'leri (Domain), servisleri (Application) ve gerçek
+         repository'lerle DbContext'i (Infrastructure) kullanıyor. WebApi'ye
+         referans YOK: burada HTTP değil, iş ve veri katmanı sınanıyor. -->
+    <ProjectReference Include="..\..\src\Domain\FileTrackingAndProcessingServices.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Application\FileTrackingAndProcessingServices.Application.csproj" />
+    <ProjectReference Include="..\..\src\Infrastructure\FileTrackingAndProcessingServices.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

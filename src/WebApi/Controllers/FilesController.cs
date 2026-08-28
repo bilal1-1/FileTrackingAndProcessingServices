@@ -1,8 +1,9 @@
-using FileTrackingAndProcessingServices.Models;
-using FileTrackingAndProcessingServices.Services;
+using FileTrackingAndProcessingServices.Application.Interfaces;
+using FileTrackingAndProcessingServices.Application.Models;
+using FileTrackingAndProcessingServices.Application.Services;
 using Microsoft.AspNetCore.Mvc;
 
-namespace FileTrackingAndProcessingServices.Controllers
+namespace FileTrackingAndProcessingServices.WebApi.Controllers
 {
     [ApiController]
     [Route("api/files")]

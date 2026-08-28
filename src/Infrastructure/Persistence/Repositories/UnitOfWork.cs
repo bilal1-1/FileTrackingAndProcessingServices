@@ -1,6 +1,7 @@
-using FileTrackingAndProcessingServices.Data;
+using FileTrackingAndProcessingServices.Application.Interfaces;
+using FileTrackingAndProcessingServices.Infrastructure.Persistence;
 
-namespace FileTrackingAndProcessingServices.Repositories
+namespace FileTrackingAndProcessingServices.Infrastructure.Persistence.Repositories
 {
     public class UnitOfWork : IUnitOfWork
     {

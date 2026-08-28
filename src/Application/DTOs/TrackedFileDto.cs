@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.DTOs
+namespace FileTrackingAndProcessingServices.Application.DTOs
 {
     /// <summary>
     /// Bir dosyanın API cevabında görünen hali.

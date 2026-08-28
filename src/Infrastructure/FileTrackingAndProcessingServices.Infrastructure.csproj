@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- DIŞ KATMAN — teknolojiyle temas eden yer.
+       Application'da tanımlı arayüzleri uygular: repository'ler veritabanına,
+       FolderScannerService dosya sistemine gider. EF Core ve Npgsql paketleri
+       SADECE burada. Uygulamanın geri kalanı bu projeyi tanımaz, yalnızca
+       arayüzleri üzerinden konuşur. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FileTrackingAndProcessingServices.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Application\FileTrackingAndProcessingServices.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- PostgreSQL'e bağlanmayı sağlayan paket. -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+
+    <!-- Migration üretme gibi EF Core araçları. DbContext ve Migrations bu
+         projede olduğu için "dotnet ef" komutları buraya bakar.
+         PrivateAssets="all": sadece build zamanında lazım, referans veren
+         projelere sızmaz. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+
+    <!-- DependencyInjection.cs; IServiceCollection, IConfiguration ve
+         Configure<T> kullanıyor. Bu proje Web SDK'sı değil, o yüzden bu
+         soyutlamalar açıkça isteniyor.
+         Sürümler 10.0.10: EntityFrameworkCore.Design zaten bu sürümü getiriyor,
+         daha düşüğü yazmak NU1605 "package downgrade" hatası veriyor. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.10" />
+  </ItemGroup>
+
+</Project>

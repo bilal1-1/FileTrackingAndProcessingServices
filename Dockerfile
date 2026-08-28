@@ -11,12 +11,19 @@ WORKDIR /src
 # değişmediği için NuGet paketleri yeniden indirilmez, derleme hızlanır.
 # Tüm kod baştan kopyalansaydı, tek satırlık bir değişiklik bile her seferinde
 # paketlerin yeniden indirilmesine yol açardı.
-COPY FileTrackingAndProcessingServices.csproj ./
-RUN dotnet restore FileTrackingAndProcessingServices.csproj
+# Katmanlı yapıda dört proje dosyası var; hepsi kopyalanmalı, çünkü restore
+# proje referanslarını takip eder ve eksik olanı bulamazsa hata verir.
+COPY src/Domain/FileTrackingAndProcessingServices.Domain.csproj                 src/Domain/
+COPY src/Application/FileTrackingAndProcessingServices.Application.csproj       src/Application/
+COPY src/Infrastructure/FileTrackingAndProcessingServices.Infrastructure.csproj src/Infrastructure/
+COPY src/WebApi/FileTrackingAndProcessingServices.WebApi.csproj                 src/WebApi/
+RUN dotnet restore src/WebApi/FileTrackingAndProcessingServices.WebApi.csproj
 
 # Şimdi geri kalan kaynak kod kopyalanır ve yayına hazır çıktı üretilir.
+# Yalnızca WebApi publish ediliyor: çalıştırılabilir olan tek proje o, diğer
+# üçü referans zinciriyle birlikte derlenip çıktıya dahil oluyor.
 COPY . ./
-RUN dotnet publish FileTrackingAndProcessingServices.csproj \
+RUN dotnet publish src/WebApi/FileTrackingAndProcessingServices.WebApi.csproj \
     -c Release \
     -o /app/publish \
     --no-restore
@@ -45,7 +52,7 @@ RUN apt-get update \
 # ve SDK son imaja hiç girmez.
 COPY --from=build /app/publish ./
 
-# /data/watch → izlenen klasör; host'tan buraya bağlama (volume) yapılır.
+# /data/watch → taranan klasör; host'tan buraya bağlama (volume) yapılır.
 # Eskiden bir /app/data klasörü de vardı: SQLite veritabanı dosyası orada
 # duruyordu. PostgreSQL'e geçildiğinde veri artık ayrı bir container'ın
 # yönettiği isimli volume'de tutulduğu için o klasör gereksizleşti.
@@ -83,4 +90,4 @@ EXPOSE 8080
 # doğrudan root yetkisi elde edemez.
 USER $APP_UID
 
-ENTRYPOINT ["dotnet", "FileTrackingAndProcessingServices.dll"]
+ENTRYPOINT ["dotnet", "FileTrackingAndProcessingServices.WebApi.dll"]

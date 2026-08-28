@@ -1,5 +1,5 @@
-using FileTrackingAndProcessingServices.Data;
-using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Domain.Entities;
+using FileTrackingAndProcessingServices.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace FileTrackingAndProcessingServices.Tests.TestHelpers

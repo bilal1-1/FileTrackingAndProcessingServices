@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.Middleware
+namespace FileTrackingAndProcessingServices.WebApi.Middleware
 {
     /// <summary>
     /// Boru hattının en dışında durur ve altındaki tüm katmanlarda oluşan

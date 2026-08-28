@@ -1,6 +1,7 @@
-using FileTrackingAndProcessingServices.Models;
-using FileTrackingAndProcessingServices.Repositories;
-using FileTrackingAndProcessingServices.Services;
+using FileTrackingAndProcessingServices.Application.Interfaces;
+using FileTrackingAndProcessingServices.Application.Models;
+using FileTrackingAndProcessingServices.Application.Services;
+using FileTrackingAndProcessingServices.Infrastructure.Persistence.Repositories;
 using FileTrackingAndProcessingServices.Tests.TestHelpers;
 
 namespace FileTrackingAndProcessingServices.Tests.Services

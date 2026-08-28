@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.Models
+namespace FileTrackingAndProcessingServices.Application.Models
 {
     /// <summary>
     /// GET /api/files için sorgu parametreleri.

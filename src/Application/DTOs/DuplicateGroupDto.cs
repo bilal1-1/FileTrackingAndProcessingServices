@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.DTOs
+namespace FileTrackingAndProcessingServices.Application.DTOs
 {
     /// <summary>
     /// Aynı SHA-256 parmak izine sahip, yani içeriği birebir aynı olan

@@ -1,7 +1,8 @@
-using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Application.Interfaces;
+using FileTrackingAndProcessingServices.Application.Models;
 using Microsoft.Extensions.Options;
 
-namespace FileTrackingAndProcessingServices.Services
+namespace FileTrackingAndProcessingServices.WebApi.BackgroundServices
 {
     public class FileScanBackgroundService : BackgroundService
     {

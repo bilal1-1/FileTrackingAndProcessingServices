@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Application/">
+    <Project Path="src/Application/FileTrackingAndProcessingServices.Application.csproj" />
+  </Folder>
+  <Folder Name="/src/Domain/">
+    <Project Path="src/Domain/FileTrackingAndProcessingServices.Domain.csproj" />
+  </Folder>
+  <Folder Name="/src/Infrastructure/">
+    <Project Path="src/Infrastructure/FileTrackingAndProcessingServices.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/WebApi/">
+    <Project Path="src/WebApi/FileTrackingAndProcessingServices.WebApi.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/FileTrackingAndProcessingServices.Tests/FileTrackingAndProcessingServices.Tests.csproj" />
+  </Folder>
+</Solution>

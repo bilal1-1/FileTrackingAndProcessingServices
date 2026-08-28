@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.Models
+namespace FileTrackingAndProcessingServices.Application.Models
 {
     /// <summary>
     /// Sayfalanmış bir sonuç kümesi. Kayıtların yanında toplam sayı ve sayfa

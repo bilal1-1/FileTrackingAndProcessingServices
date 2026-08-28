@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.Models
+namespace FileTrackingAndProcessingServices.Application.Models
 {
     public class FolderWatchSettings
     {

@@ -1,6 +1,7 @@
-using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Application.Models;
+using FileTrackingAndProcessingServices.Domain.Entities;
 
-namespace FileTrackingAndProcessingServices.Repositories
+namespace FileTrackingAndProcessingServices.Application.Interfaces
 {
     /// <summary>
     /// TrackedFile'a özel sorgular. Ortak CRUD <see cref="IRepository{T}"/>'den

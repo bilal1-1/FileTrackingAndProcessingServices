@@ -1,4 +1,4 @@
-namespace FileTrackingAndProcessingServices.Services
+namespace FileTrackingAndProcessingServices.Application.Interfaces
 {
     public interface IFolderScannerService
     {

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- EN İÇTEKİ KATMAN.
+       Hiçbir projeye ve hiçbir NuGet paketine referans vermez — bu boşluk
+       kasıtlı. Entity'ler EF Core'u, ASP.NET'i ya da veritabanını tanımaz;
+       böylece yarın EF bırakılıp başka bir teknolojiye geçilse bu proje hiç
+       değişmez. Clean Architecture'ın "bağımlılıklar hep içeri bakar" kuralının
+       başladığı yer burası. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FileTrackingAndProcessingServices.Domain</RootNamespace>
+  </PropertyGroup>
+
+</Project>

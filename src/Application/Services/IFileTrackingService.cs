@@ -1,7 +1,7 @@
-using FileTrackingAndProcessingServices.DTOs;
-using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Application.DTOs;
+using FileTrackingAndProcessingServices.Application.Models;
 
-namespace FileTrackingAndProcessingServices.Services
+namespace FileTrackingAndProcessingServices.Application.Services
 {
     /// <summary>
     /// Servis dışarıya entity (TrackedFile) değil DTO döner. Böylece veritabanı

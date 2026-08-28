@@ -1,7 +1,8 @@
-using FileTrackingAndProcessingServices.Data;
+using FileTrackingAndProcessingServices.Application.Interfaces;
+using FileTrackingAndProcessingServices.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
-namespace FileTrackingAndProcessingServices.Repositories
+namespace FileTrackingAndProcessingServices.Infrastructure.Persistence.Repositories
 {
     /// <summary>
     /// <see cref="IRepository{T}"/>'nin tek ve ortak uygulaması. Yeni bir entity

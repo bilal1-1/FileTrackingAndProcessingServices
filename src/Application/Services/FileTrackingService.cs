@@ -1,9 +1,9 @@
-using FileTrackingAndProcessingServices.DTOs;
-using FileTrackingAndProcessingServices.Mapping;
-using FileTrackingAndProcessingServices.Models;
-using FileTrackingAndProcessingServices.Repositories;
+using FileTrackingAndProcessingServices.Application.DTOs;
+using FileTrackingAndProcessingServices.Application.Interfaces;
+using FileTrackingAndProcessingServices.Application.Mapping;
+using FileTrackingAndProcessingServices.Application.Models;
 
-namespace FileTrackingAndProcessingServices.Services
+namespace FileTrackingAndProcessingServices.Application.Services
 {
     /// <summary>
     /// Sorgulama uçlarının iş katmanı. Artık DbContext'i tanımıyor: veritabanına

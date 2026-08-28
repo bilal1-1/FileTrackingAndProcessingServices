@@ -1,8 +1,10 @@
-using FileTrackingAndProcessingServices.Data;
-using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Application.Interfaces;
+using FileTrackingAndProcessingServices.Application.Models;
+using FileTrackingAndProcessingServices.Domain.Entities;
+using FileTrackingAndProcessingServices.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
-namespace FileTrackingAndProcessingServices.Repositories
+namespace FileTrackingAndProcessingServices.Infrastructure.Persistence.Repositories
 {
     public class FileRepository : Repository<TrackedFile>, IFileRepository
     {

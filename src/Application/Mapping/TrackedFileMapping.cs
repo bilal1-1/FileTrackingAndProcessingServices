@@ -1,7 +1,7 @@
-using FileTrackingAndProcessingServices.DTOs;
-using FileTrackingAndProcessingServices.Models;
+using FileTrackingAndProcessingServices.Application.DTOs;
+using FileTrackingAndProcessingServices.Domain.Entities;
 
-namespace FileTrackingAndProcessingServices.Mapping
+namespace FileTrackingAndProcessingServices.Application.Mapping
 {
     /// <summary>
     /// Entity'den DTO'ya çeviri. Tek yerde duruyor ki dışarıya hangi alanların
