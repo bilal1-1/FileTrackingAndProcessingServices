@@ -1,4 +1,5 @@
 using FileTrackingAndProcessingServices.Application.Interfaces;
+using FileTrackingAndProcessingServices.Application.Models;
 using FileTrackingAndProcessingServices.Application.Services;
 using FileTrackingAndProcessingServices.Infrastructure;
 using FileTrackingAndProcessingServices.WebApi.BackgroundServices;
@@ -20,6 +21,24 @@ builder.Services.AddSwaggerGen();
 // Infrastructure kendi kayıtlarını kendi yapıyor: DbContext, repository'ler,
 // UnitOfWork, klasör tarayıcı ve WatchSettings bağlaması.
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// Taranacak klasör göreli yazıldıysa mutlak yola çevrilir.
+//
+// Neden gerekli: göreli bir yol, uygulamanın çalışma dizinine göre çözülür ve o
+// dizin nereden başlatıldığına göre değişir (IDE, terminal, "dotnet run" hepsi
+// farklı davranabilir). Aynı ayar bir yerde doğru, başka yerde boş klasör
+// gösterirdi — üstelik hata vermeden. İçerik köküne sabitleyince sonuç her
+// durumda aynı oluyor.
+//
+// Ayar zaten mutlak yolsa (Docker'da /data/watch) dokunulmuyor.
+// Burada duruyor çünkü içerik kökünü yalnızca sunum katmanı bilir.
+builder.Services.PostConfigure<FolderWatchSettings>(settings =>
+{
+    if (!string.IsNullOrWhiteSpace(settings.FolderPath) && !Path.IsPathRooted(settings.FolderPath))
+    {
+        settings.FolderPath = Path.GetFullPath(settings.FolderPath, builder.Environment.ContentRootPath);
+    }
+});
 
 // Application katmanının tek servisi. Ayrı bir uzantı metoduna gerek görülmedi;
 // Application projesinde hiç NuGet paketi olmaması bilinçli bir tercih ve
@@ -49,3 +68,15 @@ if (app.Environment.IsDevelopment())
 app.MapControllers();
 
 app.Run();
+
+/// <summary>
+/// Üst seviye ifadelerle (top-level statements) yazılan bir Program sınıfı
+/// varsayılan olarak internal üretilir ve test proje sınırının dışından
+/// görülemez. WebApplicationFactory&lt;Program&gt; ise uygulamayı ayağa kaldırmak
+/// için bu tipe erişmek zorunda.
+///
+/// Bu satır aynı sınıfı public olarak açar. Uygulamanın çalışmasına hiçbir
+/// etkisi yok; tek amacı entegrasyon testlerinin gerçek boru hattını (routing,
+/// middleware, DI) sahte bir kurulum yerine olduğu gibi çalıştırabilmesi.
+/// </summary>
+public partial class Program { }
