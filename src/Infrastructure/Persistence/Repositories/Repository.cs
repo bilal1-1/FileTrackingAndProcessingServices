@@ -31,19 +31,19 @@ namespace FileTrackingAndProcessingServices.Infrastructure.Persistence.Repositor
         /// alanın anahtar olduğunu tahmin etmeye gerek yok. Ayrıca kayıt zaten
         /// bellekte takip ediliyorsa veritabanına hiç gitmez.
         /// </summary>
-        public virtual async Task<T?> GetByIdAsync(int id)
+        public virtual async Task<T?> GetByIdAsync(int id, CancellationToken cancellationToken = default)
         {
-            return await Table.FindAsync(id);
+            return await Table.FindAsync([id], cancellationToken);
         }
 
-        public virtual async Task<List<T>> GetAllAsync()
+        public virtual async Task<List<T>> GetAllAsync(CancellationToken cancellationToken = default)
         {
-            return await Table.ToListAsync();
+            return await Table.ToListAsync(cancellationToken);
         }
 
-        public virtual async Task AddAsync(T entity)
+        public virtual async Task AddAsync(T entity, CancellationToken cancellationToken = default)
         {
-            await Table.AddAsync(entity);
+            await Table.AddAsync(entity, cancellationToken);
         }
 
         /// <summary>

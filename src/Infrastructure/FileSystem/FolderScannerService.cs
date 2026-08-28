@@ -9,6 +9,23 @@ namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
 {
     public class FolderScannerService : IFolderScannerService
     {
+        /// <summary>
+        /// Aynı anda yalnızca bir taramanın koşmasını sağlar.
+        ///
+        /// Tarama iki yerden tetikleniyor: POST /api/files/scan ve arka plan
+        /// servisi. İkisi çakıştığında her ikisi de "bu dosya henüz kayıtlı değil"
+        /// görüp aynı satırı eklemeye çalışır. Kilit bunu en baştan engelliyor;
+        /// ikinci çağıran bekler ve sırası geldiğinde güncel veriyi okur.
+        ///
+        /// static: servis DI'da Scoped kayıtlı, yani her istek yeni bir örnek
+        /// alıyor. Kilit örnek alanı olsaydı hiçbir şeyi korumazdı.
+        ///
+        /// Bu koruma tek süreç içindir. Uygulama birden fazla container olarak
+        /// çoğaltılırsa her sürecin kendi kilidi olur — asıl güvence o yüzden
+        /// veritabanındaki FilePath benzersiz index'idir (bkz. AppDbContext).
+        /// </summary>
+        private static readonly SemaphoreSlim ScanLock = new(1, 1);
+
         // ADIM 1: "Bu sınıf şunlara ihtiyaç duyacak" diye ilan ediyoruz
         private readonly IFileRepository _repository; // db erişimini burası sağlıyor.
         private readonly IUnitOfWork _unitOfWork; // biriken değişiklikleri burası yazıyor.
@@ -29,7 +46,24 @@ namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
             _logger = logger;
         }
 
-        public async Task<int> ScanFolderAsync()
+        public async Task<int> ScanFolderAsync(CancellationToken cancellationToken = default)
+        {
+            // Sıra beklenirken iptal gelirse tarama hiç başlamaz.
+            await ScanLock.WaitAsync(cancellationToken);
+
+            try
+            {
+                return await ScanFolderCoreAsync(cancellationToken);
+            }
+            finally
+            {
+                // finally: tarama hata verse de iptal edilse de kilit mutlaka
+                // bırakılmalı, yoksa sonraki taramalar sonsuza kadar bekler.
+                ScanLock.Release();
+            }
+        }
+
+        private async Task<int> ScanFolderCoreAsync(CancellationToken cancellationToken)
         {
             // 1. Klasör var mı kontrol et
             if (!Directory.Exists(_settings.FolderPath))
@@ -53,13 +87,18 @@ namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
 
             // 3. Kayıtlı dosyaların tamamını tek sorguda çek.
             // Böylece döngü içinde her dosya için ayrı sorgu atılmaz (N+1 önlenir).
-            var existingFiles = await _repository.GetAllByPathAsync();
+            var existingFiles = await _repository.GetAllByPathAsync(cancellationToken);
 
             int newFileCount = 0;
 
             // 4. Her dosyayı tek tek işle
             foreach (var file in files)
             {
+                // Her dosyadan önce kontrol: iptal gelmişse kalan dosyalara girilmez.
+                // Buraya kadar biriken değişiklikler yazılmadan bırakılır, bu
+                // doğru davranış — yarım bir tarama kaydedilmemeli.
+                cancellationToken.ThrowIfCancellationRequested();
+
                 try
                 {
                     // 5. Bu dosya daha önce kaydedilmiş mi? (tam yola göre tekrar kontrolü)
@@ -79,7 +118,7 @@ namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
                             // "computed" adı bilinçli: bu değer henüz "yeni" değil,
                             // sadece taze hesaplanmış olan. Aşağıdaki karşılaştırma
                             // eskisiyle aynı çıkarsa içerik hiç değişmemiş demektir.
-                            var computedHash = await ComputeHashAsync(file);
+                            var computedHash = await ComputeHashAsync(file, cancellationToken);
 
                             if (string.IsNullOrEmpty(existing.Hash))
                             {
@@ -134,15 +173,21 @@ namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
                         FilePath = file.FullName,
                         Extension = file.Extension,
                         SizeBytes = file.Length,
-                        Hash = await ComputeHashAsync(file),
+                        Hash = await ComputeHashAsync(file, cancellationToken),
                         CreatedAt = file.CreationTimeUtc,
                         ModifiedAt = file.LastWriteTimeUtc
                     };
 
-                    await _repository.AddAsync(trackedFile);
+                    await _repository.AddAsync(trackedFile, cancellationToken);
                     newFileCount++;
 
                     _logger.LogInformation("Yeni dosya işlendi: {FileName}", file.Name);
+                }
+                catch (OperationCanceledException)
+                {
+                    // İptal bir hata değil. Aşağıdaki genel catch bunu yutup
+                    // taramaya devam ederdi; ayrı yakalanıp yukarı bırakılıyor.
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -153,7 +198,7 @@ namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
             // 7. Tüm yeni kayıtları ve güncellemeleri tek seferde veritabanına yaz.
             // Kaydetme anını repository değil bu servis belirliyor: döngüde biriken
             // ekleme ve güncellemelerin hepsi tek turda yazılıyor.
-            await _unitOfWork.SaveChangesAsync();
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
 
             return newFileCount;
         }
@@ -161,7 +206,7 @@ namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
         /// <summary>
         /// Dosya içeriğinin SHA-256 özetini hesaplar.
         /// </summary>
-        private static async Task<string> ComputeHashAsync(FileInfo file)
+        private static async Task<string> ComputeHashAsync(FileInfo file, CancellationToken cancellationToken)
         {
             // FileShare.ReadWrite: dosya başka bir süreç tarafından yazılmak üzere
             // açık olsa bile okuyabilelim (örn. SQLite'ın açık tuttuğu .db dosyası).
@@ -173,7 +218,7 @@ namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
 
             // Dosyanın tamamını belleğe almadan, akış halinde özetler.
             // Böylece 2 GB'lık bir dosya da 2 GB RAM tüketmez.
-            byte[] hashBytes = await SHA256.HashDataAsync(stream);
+            byte[] hashBytes = await SHA256.HashDataAsync(stream, cancellationToken);
 
             return Convert.ToHexString(hashBytes).ToLowerInvariant();
         }

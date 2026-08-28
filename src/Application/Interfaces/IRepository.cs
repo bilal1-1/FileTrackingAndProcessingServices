@@ -8,20 +8,25 @@ namespace FileTrackingAndProcessingServices.Application.Interfaces
     /// kendileri kurmaya devam eder, "veritabanı erişimi sadece repository'de"
     /// kuralı kâğıt üzerinde kalırdı. Sorgu kurma işi repository'nin içinde,
     /// korumalı <c>Table</c> özelliği üzerinden yapılır.
+    ///
+    /// Async metotlar CancellationToken alır ve varsayılanı <c>default</c>'tur:
+    /// istek yarıda kesildiğinde (istemci bağlantıyı kapattı, uygulama kapanıyor)
+    /// veritabanı sorgusu da bırakılabilsin. Varsayılan değer sayesinde token
+    /// vermek istemeyen çağıran taraf hiçbir şey değiştirmez.
     /// </summary>
     public interface IRepository<T> where T : class
     {
         /// <summary>Birincil anahtara göre tek kayıt getirir; yoksa null döner.</summary>
-        Task<T?> GetByIdAsync(int id);
+        Task<T?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
 
         /// <summary>Tablodaki tüm kayıtlar. Küçük tablolar için.</summary>
-        Task<List<T>> GetAllAsync();
+        Task<List<T>> GetAllAsync(CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Yeni kaydı ekleme listesine alır. Veritabanına yazmaz —
         /// bunun için <see cref="IUnitOfWork.SaveChangesAsync"/> çağrılmalı.
         /// </summary>
-        Task AddAsync(T entity);
+        Task AddAsync(T entity, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Mevcut bir kaydın değiştirildiğini bildirir. Yazma işi UnitOfWork'te.

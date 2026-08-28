@@ -12,7 +12,8 @@ Belirlenen bir klasördeki dosyaları periyodik olarak tarayan, her dosya hakkı
 - Uzantıya göre arama (büyük/küçük harf ve nokta yazımından bağımsız)
 - Global hata yakalama ve loglama
 - Docker ve docker-compose ile tek komutla ayağa kaldırma
-- Testcontainers ile gerçek PostgreSQL'e karşı koşan 78 birim/entegrasyon testi
+- Her push ve pull request'te derleme + testleri koşan GitHub Actions CI
+- Testcontainers ile gerçek PostgreSQL'e karşı koşan 91 birim/entegrasyon testi
 
 ## Kullanılan Teknolojiler
 
@@ -51,8 +52,15 @@ src/
     ├── BackgroundServices/     FileScanBackgroundService
     └── Program.cs              Composition root
 
-Tests/          xUnit test projesi (Domain + Application + Infrastructure'a bağlı)
+Tests/          xUnit test projesi (dört katmana da bağlı)
+  Models/         FileQueryParameters, PagedResult — saf mantık, veritabanısız
+  Services/       FileTrackingService, FolderScannerService — gerçek PostgreSQL'e karşı
+  Repositories/   Update davranışı ve FilePath benzersizliği
+  Api/            HTTP uçları — WebApplicationFactory ile gerçek boru hattı
+  TestHelpers/    Container, geçici klasör, test veritabanı, ApiFactory
+
 watched/        Taranacak örnek klasör
+.github/        CI workflow (derleme + testler)
 ```
 
 **Bağımlılık kuralı — oklar hep içeri bakar:**
@@ -105,10 +113,27 @@ dotnet ef migrations add MigrationAdi --project src/Infrastructure --startup-pro
 
 ```json
 "WatchSettings": {
-  "FolderPath": "izlenecek klasörün yolu",
+  "FolderPath": "watched",
   "ScanIntervalSeconds": 10
 }
 ```
+
+`FolderPath` göreli yazılabilir; bu durumda **çalışma dizinine göre değil, uygulamanın içerik köküne göre** çözülür (`Program.cs`). Böylece uygulamanın nereden başlatıldığı sonucu değiştirmez. Mutlak yol verilirse olduğu gibi kullanılır.
+
+- Yerelde `appsettings.Development.json` bu değeri `../../watched` yapar — yani depo kökündeki `watched/` klasörü taranır.
+- Docker'da `WatchSettings__FolderPath=/data/watch` ortam değişkeni devreye girer ve JSON'daki değeri ezer.
+
+Başka bir klasörü taratmak için ayarı değiştirmek yerine ortam değişkeni vermek yeterli:
+
+```bash
+WatchSettings__FolderPath=/istediginiz/klasor dotnet run --project src/WebApi
+```
+
+### Bağlantı bilgileri hakkında
+
+Depodaki PostgreSQL kullanıcı adı ve şifresi (`postgres` / `postgres`) **bilinçli olarak açıkta**: bu bir demo projesi ve `docker compose up` komutunun ek bir kuruluma gerek kalmadan çalışması isteniyor. Veritabanı yalnızca compose ağında ayakta, dışarıya port açmıyor.
+
+Gerçek bir ortamda bu değerler depoya girmez; bağlantı dizesi ortam değişkeni (`ConnectionStrings__DefaultConnection`) ya da .NET user secrets üzerinden verilir. Uygulama zaten ortam değişkenini JSON'a tercih ettiği için kodda hiçbir değişiklik gerekmez.
 
 ## API Uçları
 
@@ -116,9 +141,11 @@ dotnet ef migrations add MigrationAdi --project src/Infrastructure --startup-pro
 |---|---|---|
 | GET | `/api/files` | Sayfalı dosya listesi |
 | GET | `/api/files/{id}` | Tek dosya, bulunamazsa 404 |
-| GET | `/api/files/search?extension=` | Uzantıya göre arama |
+| GET | `/api/files/search?extension=` | Uzantıya göre arama (sayfalı) |
 | POST | `/api/files/scan` | Klasör taramasını manuel başlatır |
-| GET | `/api/files/duplicates` | Hash'e göre gruplanmış yinelenen dosyalar |
+| GET | `/api/files/duplicates` | Hash'e göre gruplanmış yinelenen dosyalar (sayfalı) |
+
+Liste dönen üç uç da aynı zarfı döner: `items`, `page`, `pageSize`, `totalCount`, `totalPages`, `hasPreviousPage`, `hasNextPage`. Sayfalama parametreleri (`page`, `pageSize`, `sortBy`, `sortOrder`) üçünde de geçerlidir.
 
 **Önerilen kullanım sırası:** Uygulama açıldığında arka plan servisi klasörü zaten otomatik tarar (bkz. `ScanIntervalSeconds`), ama elle denerken önce **`POST /api/files/scan`** ile taramayı tetikleyip veritabanının dolmasını sağlamak, ardından listeleme/arama uçlarını denemek daha anlamlı sonuç verir — boş bir tabloda sayfalama veya arama denemenin gösterecek bir şeyi olmaz.
 
@@ -153,12 +180,26 @@ GET /api/files?sortBy=modifiedAt&sortOrder=desc&pageSize=5
 |---|---|---|---|
 | `extension` | string | Evet | Aranacak uzantı. Nokta ile de (`.pdf`) noktasız da (`pdf`) yazılabilir, büyük/küçük harf önemsizdir |
 
+Ayrıca `GET /api/files` ile aynı sayfalama ve sıralama parametrelerini kabul eder. `totalCount`, uzantı filtresi uygulandıktan sonraki toplam sayıdır — yani "kaç `.pdf` var".
+
 Örnekler:
 
 ```
-GET /api/files/search?extension=pdf     → .pdf dosyaları
-GET /api/files/search?extension=.PDF    → aynı sonuç, büyük harf ve nokta fark etmez
-GET /api/files/search                   → extension eksik, 400 Bad Request döner
+GET /api/files/search?extension=pdf                  → ilk 10 .pdf dosyası
+GET /api/files/search?extension=.PDF                 → aynı sonuç, büyük harf ve nokta fark etmez
+GET /api/files/search?extension=pdf&page=2           → sonraki 10 kayıt
+GET /api/files/search?extension=pdf&sortBy=sizeBytes&sortOrder=desc
+                                                     → en büyük .pdf dosyaları önce
+GET /api/files/search                                → extension eksik, 400 Bad Request döner
+```
+
+### GET /api/files/duplicates — parametreler
+
+`page` ve `pageSize` ile sayfalanır. Gruplar **israf edilen alana göre azalan** sırada gelir; bu sıralama veritabanında yapılır, yani `page=1` her zaman en çok yer kaplayan grupları verir. `totalCount` toplam yinelenen grup sayısıdır (dosya sayısı değil). `sortBy`/`sortOrder` bu uçta yok sayılır — grup sıralaması sabittir.
+
+```
+GET /api/files/duplicates              → en çok yer israf eden ilk 10 grup
+GET /api/files/duplicates?pageSize=3   → ilk 3 grup
 ```
 
 ## Swagger
@@ -196,6 +237,8 @@ dotnet test
 
 Testler gerçek bir PostgreSQL container'ı (Testcontainers ile, Docker gerektirir) üzerinde koşar; sahte (mock) veritabanı kullanılmaz.
 
+Aynı komutlar her push ve pull request'te GitHub Actions üzerinde de koşuyor (`.github/workflows/ci.yml`): `dotnet restore`, `dotnet build -warnaserror`, `dotnet test`. Uyarılar hata sayılıyor — proje şu anda 0 uyarı ile derleniyor ve bu eşiğin sessizce kayması istenmiyor.
+
 ## Mimari ve Teknik Kararlar
 
 **Clean Architecture katmanları** — proje tek bir web projesi olarak başladı (`Controllers` / `Services` / `Data` / `Models` klasörleri), sonradan dört ayrı projeye bölündü: `Domain`, `Application`, `Infrastructure`, `WebApi`. Bölünmenin klasör ayrımından farkı, **derleyicinin kuralı zorlamasıdır**: `Application` projesinin `Infrastructure`'a referansı olmadığı için oradaki bir sınıfı yanlışlıkla kullanmak derleme hatası verir. Klasör ayrımında bunu engelleyen hiçbir şey yoktu.
@@ -203,6 +246,10 @@ Testler gerçek bir PostgreSQL container'ı (Testcontainers ile, Docker gerektir
 **Entity yerine DTO dönülmesi** — servisler `TrackedFile` entity'sini değil `TrackedFileDto` döner. Veritabanı tablosunu doğrudan dışarı vermek, tablo şemasını API sözleşmesi haline getirir; tabloya bir kolon eklendiği anda API cevabı da istemsizce değişirdi. Çeviri tek yerde (`Application/Mapping`) toplandı.
 
 **Repository ve Unit of Work** — `DbContext` yalnızca `Infrastructure` içinde kullanılır; servisler `IFileRepository` ve `IUnitOfWork` arayüzlerini görür. Ortak CRUD işlemleri generic `Repository<T>`'de bir kez yazıldı, `FileRepository` yalnızca TrackedFile'a özel sorguları ekler. Repository metotları `SaveChanges` çağırmaz — kaydetme anını çağıran taraf belirler, böylece tarama döngüsünde biriken tüm ekleme ve güncellemeler tek transaction'da yazılır. Güncelleme `Update` ile açıkça bildirilir: EF Core takip ettiği kayıttaki değişikliği kendiliğinden fark ederdi, ama o zaman kodda güncellemenin yapıldığını söyleyen hiçbir ifade olmaz ve davranış sorgunun `AsNoTracking` olmamasına sessizce bağlı kalırdı.
+
+**Eşzamanlı tarama iki katmanda engelleniyor** — tarama iki yerden tetiklenebilir: `POST /api/files/scan` ve arka plan servisi. İkisi çakışırsa her ikisi de "bu dosya henüz kayıtlı değil" görüp aynı satırı ekleyebilir. Önlem iki katmanlı: (1) `FolderScannerService` içinde süreç genelinde bir kilit (`static SemaphoreSlim`) — ikinci çağıran bekler, paralel koşmaz; (2) veritabanında `FilePath` üzerinde **benzersiz index**. Kilit tek süreç içindir; uygulama birden çok container olarak çoğaltılırsa her sürecin kendi kilidi olacağı için asıl güvence index'tir. Benzersiz olmayan `Hash` index'iyle karıştırılmamalı: aynı hash'in birden çok satırda olması zaten aranan durumdur, aynı yolun iki kez olması ise her zaman hatadır.
+
+**İptal edilebilirlik (CancellationToken)** — tüm async veri erişimi ve servis metotları `CancellationToken` alır (varsayılanı `default`, yani mevcut çağıranlar etkilenmez). Controller'lar `HttpContext.RequestAborted`, arka plan servisi `stoppingToken` geçirir. Böylece istemci bağlantıyı kapattığında ya da uygulama kapanırken süren tarama ve sorgular bırakılabiliyor; taramanın dosya döngüsü her turda iptal kontrolü yapar ve yarım kalan değişiklikler kaydedilmez. Döngüdeki genel `catch (Exception)` bloğu iptali yutmasın diye `OperationCanceledException` ayrıca yakalanıp yukarı bırakılıyor.
 
 **Dependency Injection ve arayüzler üzerinden bağımlılık** — `FilesController`, somut `FileTrackingService` yerine `IFileTrackingService` arayüzüne bağımlı. Somut sınıfların arayüzlere bağlandığı tek yer `Program.cs` (composition root); Infrastructure kendi kayıtlarını `AddInfrastructure` uzantısıyla kendisi yapar. Bu ayrım implementasyonu değiştirmeyi veya teste sahte bir uygulama vermeyi controller'a hiç dokunmadan mümkün kılar.
 
@@ -218,7 +265,9 @@ Testler gerçek bir PostgreSQL container'ı (Testcontainers ile, Docker gerektir
 
 **Background Service ile otomatik tarama, manuel tarama endpoint'inden ayrı** — `IFolderScannerService.ScanFolderAsync()` hem `POST /api/files/scan` tarafından hem de `FileScanBackgroundService` tarafından çağrılıyor. Tarama mantığı önce manuel endpoint ile doğru çalıştığı doğrulandıktan sonra otomatikleştirildi.
 
-**Testler gerçek PostgreSQL'e karşı, sahte (mock) DbContext ile değil** — LINQ sorguları veritabanına göre farklı SQL'e çevrilir (ör. metin sıralaması PostgreSQL ile SQLite arasında farklı davranır). Testcontainers ile testler sırasında gerçek bir `postgres:17` container'ı açılıp gerçek migration'lar uygulanıyor; böylece "sorgu gerçekten çalışıyor mu" sorusu da test edilmiş oluyor. 78 test performans için tek bir container'ı paylaşıyor, izolasyon her testten önce tablo boşaltılarak sağlanıyor.
+**HTTP uçları ayrıca uçtan uca sınanıyor** — servis testleri "sorgu doğru sonucu veriyor mu" sorusunu cevaplıyor; ama bulunamayan kaydın 404'e çevrilmesi, eksik parametrenin 400 dönmesi, `duplicates` rotasının `{id}` kalıbından önce eşleşmesi ve hata middleware'inin 500 + `traceId` üretmesi controller sınıfının içinde değil boru hattında yaşıyor. Bunlar `WebApplicationFactory` ile uygulama bellek içinde gerçek boru hattıyla ayağa kaldırılarak test ediliyor. Üretim yapılandırmasından yalnızca iki şey değişiyor: bağlantı dizesi test container'ına yönlendiriliyor ve arka plan tarama servisi kaldırılıyor (kalsaydı testin kurduğu veriye kendiliğinden kayıt ekler, testler ara ara düşerdi).
+
+**Testler gerçek PostgreSQL'e karşı, sahte (mock) DbContext ile değil** — LINQ sorguları veritabanına göre farklı SQL'e çevrilir (ör. metin sıralaması PostgreSQL ile SQLite arasında farklı davranır). Testcontainers ile testler sırasında gerçek bir `postgres:17` container'ı açılıp gerçek migration'lar uygulanıyor; böylece "sorgu gerçekten çalışıyor mu" sorusu da test edilmiş oluyor. 91 test performans için tek bir container'ı paylaşıyor, izolasyon her testten önce tablo boşaltılarak sağlanıyor.
 
 **Dockerfile iki aşamalı (multi-stage)** — derleme SDK imajıyla (~800 MB, derleyici dahil), çalıştırma ise sadece runtime imajıyla yapılıyor; son imaja SDK ve kaynak kod dahil olmuyor, imaj küçük kalıyor.
 

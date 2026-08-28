@@ -18,30 +18,26 @@ namespace FileTrackingAndProcessingServices.Application.Services
             _repository = repository;
         }
 
-        public async Task<PagedResult<TrackedFileDto>> GetAllFilesAsync(FileQueryParameters parameters) // Tüm dosyaları sayfalı getirir (filtreleme/sıralama parametreleri ile)
+        public async Task<PagedResult<TrackedFileDto>> GetAllFilesAsync( // Tüm dosyaları sayfalı getirir (filtreleme/sıralama parametreleri ile)
+            FileQueryParameters parameters, CancellationToken cancellationToken = default)
         {
-            var (items, totalCount) = await _repository.GetPagedAsync(parameters);
+            var (items, totalCount) = await _repository.GetPagedAsync(parameters, cancellationToken);
 
-            return new PagedResult<TrackedFileDto>
-            {
-                Items = items.ToDtoList(), // Bu sayfadaki dosyalar (entity değil, DTO)
-                Page = parameters.Page, // Kaçıncı sayfa
-                PageSize = parameters.PageSize, // Sayfa başı kayıt
-                TotalCount = totalCount // Toplam dosya sayısı
-            };
+            return ToPagedResult(items.ToDtoList(), parameters, totalCount);
         }
 
         // Verilen ID'ye sahip dosyayı getirir; bulunamazsa null döner.
-        public async Task<TrackedFileDto?> GetByIdAsync(int id)
+        public async Task<TrackedFileDto?> GetByIdAsync(int id, CancellationToken cancellationToken = default)
         {
-            var file = await _repository.GetByIdAsync(id);
+            var file = await _repository.GetByIdAsync(id, cancellationToken);
 
             // Kayıt yoksa null dönmeye devam ediyoruz; controller bunu 404'e çeviriyor.
             return file?.ToDto();
         }
 
-        // Verilen uzantıya (.pdf, .docx vb.) sahip tüm dosyaları arar.
-        public async Task<List<TrackedFileDto>> SearchByExtensionAsync(string extension)
+        // Verilen uzantıya (.pdf, .docx vb.) sahip dosyaları sayfalı olarak arar.
+        public async Task<PagedResult<TrackedFileDto>> SearchByExtensionAsync(
+            string extension, FileQueryParameters parameters, CancellationToken cancellationToken = default)
         {
             var normalizedExtension = NormalizeExtension(extension);
 
@@ -49,12 +45,13 @@ namespace FileTrackingAndProcessingServices.Application.Services
             // olmadığı için sorgu zaten kesin olarak boş dönerdi.
             if (normalizedExtension.Length == 0)
             {
-                return new List<TrackedFileDto>();
+                return ToPagedResult(new List<TrackedFileDto>(), parameters, totalCount: 0);
             }
 
-            var files = await _repository.GetByExtensionAsync(normalizedExtension);
+            var (items, totalCount) = await _repository.GetPagedByExtensionAsync(
+                normalizedExtension, parameters, cancellationToken);
 
-            return files.ToDtoList();
+            return ToPagedResult(items.ToDtoList(), parameters, totalCount);
         }
 
         /// <summary>
@@ -90,22 +87,26 @@ namespace FileTrackingAndProcessingServices.Application.Services
             return normalized.StartsWith('.') ? normalized : '.' + normalized;
         }
 
-        public async Task<List<DuplicateGroupDto>> GetDuplicatesAsync()
+        public async Task<PagedResult<DuplicateGroupDto>> GetDuplicatesAsync(
+            FileQueryParameters parameters, CancellationToken cancellationToken = default)
         {
-            // 1. Önce sadece yinelenen hash değerlerini bul.
-            var duplicateHashes = await _repository.GetDuplicateHashesAsync();
+            // 1. Bu sayfaya düşen yinelenen hash'leri ve toplam grup sayısını al.
+            //    Sıralama ve sayfalama veritabanında yapıldı; buraya yalnızca
+            //    gösterilecek grupların hash'leri geliyor.
+            var (duplicateHashes, totalCount) = await _repository
+                .GetDuplicateHashesPagedAsync(parameters, cancellationToken);
 
             if (duplicateHashes.Count == 0)
             {
-                return new List<DuplicateGroupDto>();
+                return ToPagedResult(new List<DuplicateGroupDto>(), parameters, totalCount);
             }
 
             // 2. Sadece bu hash'lere ait satırları çek.
-            var files = await _repository.GetByHashesAsync(duplicateHashes);
+            var files = await _repository.GetByHashesAsync(duplicateHashes, cancellationToken);
 
-            // 3. Gruplara ayır. Bu aşama bellekte — elde zaten sadece yinelenen
-            //    kayıtlar var, tüm tablo değil.
-            return files
+            // 3. Gruplara ayır. Bu aşama bellekte — elde zaten sadece bu sayfaya
+            //    düşen grupların kayıtları var, tüm tablo değil.
+            var groups = files
                 .GroupBy(f => f.Hash)
                 .Select(g => new DuplicateGroupDto
                 {
@@ -116,10 +117,28 @@ namespace FileTrackingAndProcessingServices.Application.Services
                     Files = g.OrderBy(f => f.FilePath).ToDtoList()
                 })
                 // En çok yer israf eden grup başta gelsin — listeye bakan kişi
-                // için en işe yarar sıralama bu.
+                // için en işe yarar sıralama bu. Veritabanı sayfayı zaten bu
+                // sıraya göre seçti; burası yalnızca sayfa İÇİNDEKİ sırayı
+                // koruyor, çünkü GroupBy sırayı garanti etmez.
                 .OrderByDescending(g => g.WastedBytes)
                 .ThenBy(g => g.Hash)
                 .ToList();
+
+            return ToPagedResult(groups, parameters, totalCount);
         }
+
+        /// <summary>
+        /// Sayfa bilgisini cevaba iliştirir. Üç uçta da aynı olduğu için tek
+        /// yerde: sayfa numarasını bir yerde parametreden, başka yerde başka
+        /// kaynaktan almak sessiz tutarsızlık üretirdi.
+        /// </summary>
+        private static PagedResult<T> ToPagedResult<T>(
+            List<T> items, FileQueryParameters parameters, int totalCount) => new()
+            {
+                Items = items,
+                Page = parameters.Page,       // Kaçıncı sayfa
+                PageSize = parameters.PageSize, // Sayfa başı kayıt
+                TotalCount = totalCount       // Filtreye uyan toplam kayıt sayısı
+            };
     }
 }

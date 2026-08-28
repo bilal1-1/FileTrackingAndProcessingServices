@@ -103,8 +103,12 @@ namespace FileTrackingAndProcessingServices.Tests.Services
             // Sıralamada eşitlik varsa aynı kayıt iki sayfada görünebilir.
             // Servis bunu ThenBy(Id) ile engelliyor; burada aynı FileName'e sahip
             // kayıtlarla o güvence sınanıyor.
+            // Dosya adları aynı ama yolları farklı — gerçek hayatta da aynı isim
+            // ancak farklı klasörlerde bulunabilir. FilePath veritabanında
+            // benzersiz olduğu için burada da farklı olmak zorunda.
             var files = Enumerable.Range(1, 15)
-                .Select(_ => TestDatabase.CreateTrackedFile("ayni-isim.txt"))
+                .Select(i => TestDatabase.CreateTrackedFile(
+                    "ayni-isim.txt", filePath: $@"C:\test\klasor{i}\ayni-isim.txt"))
                 .ToArray();
             _db.Seed(files);
 
@@ -233,6 +237,13 @@ namespace FileTrackingAndProcessingServices.Tests.Services
 
         // ---------- SearchByExtensionAsync ----------
 
+        /// <summary>
+        /// Sayfalama bu testlerin konusu değil; hepsi tek sayfaya sığsın diye
+        /// geniş bir sayfa boyutu veriliyor. Sayfalamanın kendisi GetAllFiles
+        /// testlerinde ayrıca sınanıyor.
+        /// </summary>
+        private static FileQueryParameters WidePage() => new() { PageSize = 100 };
+
         [Fact]
         public async Task Search_MatchingExtension_ReturnsOnlyThose()
         {
@@ -241,10 +252,10 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 TestDatabase.CreateTrackedFile("b.pdf", extension: ".pdf"),
                 TestDatabase.CreateTrackedFile("c.txt", extension: ".txt"));
 
-            var result = await _service.SearchByExtensionAsync(".txt");
+            var result = await _service.SearchByExtensionAsync(".txt", WidePage());
 
-            Assert.Equal(2, result.Count);
-            Assert.All(result, f => Assert.Equal(".txt", f.Extension));
+            Assert.Equal(2, result.Items.Count);
+            Assert.All(result.Items, f => Assert.Equal(".txt", f.Extension));
         }
 
         [Fact]
@@ -252,9 +263,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
         {
             _db.Seed(TestDatabase.CreateTrackedFile("a.txt", extension: ".txt"));
 
-            var result = await _service.SearchByExtensionAsync(".docx");
+            var result = await _service.SearchByExtensionAsync(".docx", WidePage());
 
-            Assert.Empty(result);   // null değil, boş liste
+            Assert.Empty(result.Items);   // null değil, boş liste
         }
 
         [Theory]
@@ -269,9 +280,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
             // gerekir.
             _db.Seed(TestDatabase.CreateTrackedFile("belge", extension: storedExtension));
 
-            var result = await _service.SearchByExtensionAsync(searchTerm);
+            var result = await _service.SearchByExtensionAsync(searchTerm, WidePage());
 
-            Assert.Single(result);
+            Assert.Single(result.Items);
         }
 
         [Theory]
@@ -286,9 +297,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
             // kültür ayarı ne olursa olsun eşleşmenin bozulmadığını güvenceye alır.
             _db.Seed(TestDatabase.CreateTrackedFile("resim", extension: storedExtension));
 
-            var result = await _service.SearchByExtensionAsync(searchTerm);
+            var result = await _service.SearchByExtensionAsync(searchTerm, WidePage());
 
-            Assert.Single(result);
+            Assert.Single(result.Items);
         }
 
         [Fact]
@@ -301,10 +312,10 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 TestDatabase.CreateTrackedFile("c", extension: ".pdf"),
                 TestDatabase.CreateTrackedFile("d", extension: ".txtx"));
 
-            var result = await _service.SearchByExtensionAsync(".txt");
+            var result = await _service.SearchByExtensionAsync(".txt", WidePage());
 
-            Assert.Equal(2, result.Count);
-            Assert.All(result, f => Assert.Equal(".txt", f.Extension.ToLowerInvariant()));
+            Assert.Equal(2, result.Items.Count);
+            Assert.All(result.Items, f => Assert.Equal(".txt", f.Extension.ToLowerInvariant()));
         }
 
         [Theory]
@@ -320,9 +331,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
             // "böyle dosya yok" görüntüsünün arkasına saklanarak.
             _db.Seed(TestDatabase.CreateTrackedFile("rapor", extension: ".pdf"));
 
-            var result = await _service.SearchByExtensionAsync(searchTerm);
+            var result = await _service.SearchByExtensionAsync(searchTerm, WidePage());
 
-            Assert.Single(result);
+            Assert.Single(result.Items);
         }
 
         [Theory]
@@ -334,9 +345,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
             // boş listedir; servis bu durumda veritabanına hiç gitmiyor.
             _db.Seed(TestDatabase.CreateTrackedFile("rapor", extension: ".pdf"));
 
-            var result = await _service.SearchByExtensionAsync(searchTerm);
+            var result = await _service.SearchByExtensionAsync(searchTerm, WidePage());
 
-            Assert.Empty(result);
+            Assert.Empty(result.Items);
         }
 
         [Fact]
@@ -349,10 +360,10 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 TestDatabase.CreateTrackedFile("b", extension: ".pdfx"),
                 TestDatabase.CreateTrackedFile("c", extension: ".pd"));
 
-            var result = await _service.SearchByExtensionAsync("pdf");
+            var result = await _service.SearchByExtensionAsync("pdf", WidePage());
 
-            Assert.Single(result);
-            Assert.Equal(".pdf", result[0].Extension);
+            Assert.Single(result.Items);
+            Assert.Equal(".pdf", result.Items[0].Extension);
         }
 
         // ---------- GetDuplicatesAsync ----------
@@ -364,9 +375,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 TestDatabase.CreateTrackedFile("kopya-a.txt", hash: "aaa", sizeBytes: 24),
                 TestDatabase.CreateTrackedFile("kopya-b.txt", hash: "aaa", sizeBytes: 24));
 
-            var result = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync(WidePage());
 
-            var group = Assert.Single(result);
+            var group = Assert.Single(result.Items);
             Assert.Equal("aaa", group.Hash);
             Assert.Equal(2, group.Count);
             Assert.Equal(24, group.SizeBytes);
@@ -382,9 +393,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 TestDatabase.CreateTrackedFile("kopya-b.txt", hash: "aaa"),
                 TestDatabase.CreateTrackedFile("tekil-c.txt", hash: "ccc"));
 
-            var result = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync(WidePage());
 
-            var group = Assert.Single(result);
+            var group = Assert.Single(result.Items);
             Assert.DoesNotContain(group.Files, f => f.FileName == "tekil-c.txt");
         }
 
@@ -396,9 +407,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 TestDatabase.CreateTrackedFile("b.txt", hash: "aaa", sizeBytes: 500),
                 TestDatabase.CreateTrackedFile("c.txt", hash: "aaa", sizeBytes: 500));
 
-            var result = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync(WidePage());
 
-            var group = Assert.Single(result);
+            var group = Assert.Single(result.Items);
             Assert.Equal(3, group.Count);
             Assert.Equal(1000, group.WastedBytes);   // 500 * (3 - 1)
         }
@@ -412,9 +423,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 TestDatabase.CreateTrackedFile("b.txt", hash: ""),
                 TestDatabase.CreateTrackedFile("c.txt", hash: ""));
 
-            var result = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync(WidePage());
 
-            Assert.Empty(result);
+            Assert.Empty(result.Items);
         }
 
         [Fact]
@@ -428,12 +439,12 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 TestDatabase.CreateTrackedFile("buyuk-1.bin", hash: "bbb", sizeBytes: 9000),
                 TestDatabase.CreateTrackedFile("buyuk-2.bin", hash: "bbb", sizeBytes: 9000));
 
-            var result = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync(WidePage());
 
-            Assert.Equal(2, result.Count);
-            Assert.Equal("bbb", result[0].Hash);
-            Assert.Equal(9000, result[0].WastedBytes);
-            Assert.Equal(10, result[1].WastedBytes);
+            Assert.Equal(2, result.Items.Count);
+            Assert.Equal("bbb", result.Items[0].Hash);
+            Assert.Equal(9000, result.Items[0].WastedBytes);
+            Assert.Equal(10, result.Items[1].WastedBytes);
         }
 
         [Fact]
@@ -443,17 +454,17 @@ namespace FileTrackingAndProcessingServices.Tests.Services
                 TestDatabase.CreateTrackedFile("a.txt", hash: "aaa"),
                 TestDatabase.CreateTrackedFile("b.txt", hash: "bbb"));
 
-            var result = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync(WidePage());
 
-            Assert.Empty(result);
+            Assert.Empty(result.Items);
         }
 
         [Fact]
         public async Task GetDuplicates_EmptyDatabase_ReturnsEmptyList()
         {
-            var result = await _service.GetDuplicatesAsync();
+            var result = await _service.GetDuplicatesAsync(WidePage());
 
-            Assert.Empty(result);
+            Assert.Empty(result.Items);
         }
     }
 }

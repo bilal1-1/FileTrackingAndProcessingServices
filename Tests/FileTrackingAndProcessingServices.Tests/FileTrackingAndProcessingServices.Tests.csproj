@@ -25,6 +25,13 @@
          PostgreSQL'de çalışırken testlerin SQLite'ı doğrulaması, çalıştırılan
          veritabanının test edilmemesi anlamına geliyordu.
          DİKKAT: bu yüzden "dotnet test" için Docker çalışır durumda olmalı. -->
+    <!-- WebApplicationFactory: uygulamayı bellek içinde, gerçek boru hattıyla
+         (routing, middleware, DI) ayağa kaldırır. Controller sınıfını elle
+         "new"lemek yerine bu kullanılıyor — çünkü sınanmak istenen şeylerin
+         çoğu (404/400 durum kodları, rota önceliği, hata middleware'i) sınıfın
+         içinde değil, boru hattında yaşıyor. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.10" />
+
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
@@ -35,12 +42,15 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Testler entity'leri (Domain), servisleri (Application) ve gerçek
-         repository'lerle DbContext'i (Infrastructure) kullanıyor. WebApi'ye
-         referans YOK: burada HTTP değil, iş ve veri katmanı sınanıyor. -->
+    <!-- Testler entity'leri (Domain), servisleri (Application), gerçek
+         repository'lerle DbContext'i (Infrastructure) ve HTTP uçlarını (WebApi)
+         kullanıyor. Test projesi tüm katmanları görür — kural, uygulama
+         katmanlarının birbirini görmemesi üzerine; testin hepsini görmesi
+         normaldir ve dışarıdan bakan bir doğrulama sağlar. -->
     <ProjectReference Include="..\..\src\Domain\FileTrackingAndProcessingServices.Domain.csproj" />
     <ProjectReference Include="..\..\src\Application\FileTrackingAndProcessingServices.Application.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure\FileTrackingAndProcessingServices.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\WebApi\FileTrackingAndProcessingServices.WebApi.csproj" />
   </ItemGroup>
 
 </Project>

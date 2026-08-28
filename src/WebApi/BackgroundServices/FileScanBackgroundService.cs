@@ -32,9 +32,19 @@ namespace FileTrackingAndProcessingServices.WebApi.BackgroundServices
                     using (var scope = _serviceProvider.CreateScope())
                     {
                         var scanner = scope.ServiceProvider.GetRequiredService<IFolderScannerService>();
-                        var newFileCount = await scanner.ScanFolderAsync();
+                        // stoppingToken aşağı geçiriliyor: uygulama kapanırken
+                        // (docker compose down) süren tarama yarıda bırakılabilsin.
+                        var newFileCount = await scanner.ScanFolderAsync(stoppingToken);
                         _logger.LogInformation("Otomatik tarama tamamlandı. {Count} yeni dosya işlendi.", newFileCount);
                     }
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    // Uygulama kapanırken tarama yarıda kesildi. Bu bir hata
+                    // değil; aşağıdaki genel catch yakalasaydı her kapanışta
+                    // loglara hata satırı düşerdi.
+                    _logger.LogInformation("Otomatik tarama, uygulama kapandığı için yarıda bırakıldı.");
+                    break;
                 }
                 catch (Exception ex)
                 {

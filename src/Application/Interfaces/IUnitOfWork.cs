@@ -14,6 +14,6 @@ namespace FileTrackingAndProcessingServices.Application.Interfaces
     public interface IUnitOfWork
     {
         /// <summary>Etkilenen satır sayısını döner.</summary>
-        Task<int> SaveChangesAsync();
+        Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     }
 }

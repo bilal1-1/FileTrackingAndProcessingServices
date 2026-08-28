@@ -266,9 +266,9 @@ namespace FileTrackingAndProcessingServices.Tests.Services
             await CreateScanner().ScanFolderAsync();
 
             var trackingService = new FileTrackingService(new FileRepository(_db.Context));
-            var groups = await trackingService.GetDuplicatesAsync();
+            var groups = await trackingService.GetDuplicatesAsync(new FileQueryParameters());
 
-            var group = Assert.Single(groups);
+            var group = Assert.Single(groups.Items);
             Assert.Equal(2, group.Count);
             Assert.DoesNotContain(group.Files, f => f.FileName == "tekil-c.txt");
         }
