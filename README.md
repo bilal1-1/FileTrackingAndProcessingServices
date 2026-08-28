@@ -32,8 +32,8 @@ src/
 │
 ├── Application/                İş katmanı. Yalnızca Domain'e bağlı, NuGet paketi yok.
 │   ├── Interfaces/             IRepository<T>, IFileRepository, IUnitOfWork,
-│   │                           IFolderScannerService
-│   ├── Services/               IFileTrackingService, FileTrackingService
+│   │                           IFolderScannerService, IFileTrackingService
+│   ├── Services/               FileTrackingService
 │   ├── DTOs/                   TrackedFileDto, DuplicateGroupDto
 │   ├── Models/                 FileQueryParameters, PagedResult, FolderWatchSettings
 │   └── Mapping/                Entity -> DTO çevirisi
@@ -202,7 +202,7 @@ Testler gerçek bir PostgreSQL container'ı (Testcontainers ile, Docker gerektir
 
 **Entity yerine DTO dönülmesi** — servisler `TrackedFile` entity'sini değil `TrackedFileDto` döner. Veritabanı tablosunu doğrudan dışarı vermek, tablo şemasını API sözleşmesi haline getirir; tabloya bir kolon eklendiği anda API cevabı da istemsizce değişirdi. Çeviri tek yerde (`Application/Mapping`) toplandı.
 
-**Repository ve Unit of Work** — `DbContext` yalnızca `Infrastructure` içinde kullanılır; servisler `IFileRepository` ve `IUnitOfWork` arayüzlerini görür. Ortak CRUD işlemleri generic `Repository<T>`'de bir kez yazıldı, `FileRepository` yalnızca TrackedFile'a özel sorguları ekler. Repository metotları `SaveChanges` çağırmaz — kaydetme anını çağıran taraf belirler, böylece tarama döngüsünde biriken tüm ekleme ve güncellemeler tek transaction'da yazılır.
+**Repository ve Unit of Work** — `DbContext` yalnızca `Infrastructure` içinde kullanılır; servisler `IFileRepository` ve `IUnitOfWork` arayüzlerini görür. Ortak CRUD işlemleri generic `Repository<T>`'de bir kez yazıldı, `FileRepository` yalnızca TrackedFile'a özel sorguları ekler. Repository metotları `SaveChanges` çağırmaz — kaydetme anını çağıran taraf belirler, böylece tarama döngüsünde biriken tüm ekleme ve güncellemeler tek transaction'da yazılır. Güncelleme `Update` ile açıkça bildirilir: EF Core takip ettiği kayıttaki değişikliği kendiliğinden fark ederdi, ama o zaman kodda güncellemenin yapıldığını söyleyen hiçbir ifade olmaz ve davranış sorgunun `AsNoTracking` olmamasına sessizce bağlı kalırdı.
 
 **Dependency Injection ve arayüzler üzerinden bağımlılık** — `FilesController`, somut `FileTrackingService` yerine `IFileTrackingService` arayüzüne bağımlı. Somut sınıfların arayüzlere bağlandığı tek yer `Program.cs` (composition root); Infrastructure kendi kayıtlarını `AddInfrastructure` uzantısıyla kendisi yapar. Bu ayrım implementasyonu değiştirmeyi veya teste sahte bir uygulama vermeyi controller'a hiç dokunmadan mümkün kılar.
 

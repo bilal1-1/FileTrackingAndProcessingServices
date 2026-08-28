@@ -1,3 +1,4 @@
+using FileTrackingAndProcessingServices.Application.Interfaces;
 using FileTrackingAndProcessingServices.Application.Services;
 using FileTrackingAndProcessingServices.Infrastructure;
 using FileTrackingAndProcessingServices.WebApi.BackgroundServices;

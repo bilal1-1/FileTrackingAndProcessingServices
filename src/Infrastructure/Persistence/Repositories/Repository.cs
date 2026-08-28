@@ -46,6 +46,21 @@ namespace FileTrackingAndProcessingServices.Infrastructure.Persistence.Repositor
             await Table.AddAsync(entity);
         }
 
+        /// <summary>
+        /// Kaydı "değişti" olarak işaretler. Takip edilmeyen bir kayıt gelirse
+        /// önce takibe alır, bu yüzden sorgunun AsNoTracking olup olmamasından
+        /// bağımsız çalışır.
+        ///
+        /// Not: bu çağrı tüm alanları değişmiş sayar, yani UPDATE cümlesine
+        /// yalnızca değişenler değil bütün kolonlar girer. Bu tablo için fark
+        /// edilir bir maliyeti yok; karşılığında güncelleme davranışı EF'in
+        /// değişiklik takibine bağlı olmaktan çıkıyor.
+        /// </summary>
+        public virtual void Update(T entity)
+        {
+            Table.Update(entity);
+        }
+
         public virtual void Remove(T entity)
         {
             Table.Remove(entity);

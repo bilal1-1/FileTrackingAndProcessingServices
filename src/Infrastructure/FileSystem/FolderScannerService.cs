@@ -100,14 +100,30 @@ namespace FileTrackingAndProcessingServices.Infrastructure.FileSystem
                             }
 
                             existing.Hash = computedHash;
+
+                            // Zaten işlenmiş — tekrar İŞLENMEZ, yeni satır açılmaz.
+                            // Sadece diskteki güncel bilgisi tazelenir.
+                            existing.ModifiedAt = file.LastWriteTimeUtc;
+                            existing.SizeBytes = file.Length;
+
+                            // Güncelleme niyeti burada açıkça bildiriliyor.
+                            // Bu satır olmadan da çalışırdı, çünkü EF Core
+                            // repository'den dönen kaydı izliyor ve değişikliği
+                            // kendisi fark ediyor. Ama o zaman kodda güncellemenin
+                            // yapıldığını söyleyen hiçbir ifade olmaz ve davranış,
+                            // sorgunun takip açık olmasına sessizce bağlı kalırdı.
+                            _repository.Update(existing);
+
+                            _logger.LogDebug("Dosya zaten kayıtlı, bilgisi güncellendi: {FileName}", file.Name);
+                        }
+                        else
+                        {
+                            // Boyut, tarih ve hash aynı: yazılacak bir şey yok,
+                            // veritabanına hiç dokunulmuyor. Tarama sık koştuğu
+                            // için değişmemiş dosyalara UPDATE atmamak önemli.
+                            _logger.LogDebug("Dosya zaten kayıtlı, değişiklik yok: {FileName}", file.Name);
                         }
 
-                        // Zaten işlenmiş — tekrar İŞLENMEZ, yeni satır açılmaz.
-                        // Sadece diskteki güncel bilgisi tazelenir.
-                        existing.ModifiedAt = file.LastWriteTimeUtc;
-                        existing.SizeBytes = file.Length;
-
-                        _logger.LogDebug("Dosya zaten kayıtlı, bilgisi güncellendi: {FileName}", file.Name);
                         continue;
                     }
 
