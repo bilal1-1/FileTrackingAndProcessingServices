@@ -1,4 +1,4 @@
-# İzlenen klasör
+# watched/ — taranan klasör
 
 `docker compose up` ile çalıştırıldığında bu klasör container'ın içine
 `/data/watch` olarak salt okunur biçimde bağlanır ve tarayıcı burayı tarar
@@ -8,8 +8,8 @@ Klasörde hazır üç örnek dosya var, demo ilk açılışta çalışsın diye:
 
 | Dosya | Ne gösteriyor |
 |---|---|
-| `rapor.txt` ve `rapor-kopya.txt` | Aynı içerik, farklı isim → `duplicates` bunları tek grupta bulur, çünkü hash isimden değil İÇERİKTEN hesaplanır |
-| `BELGE.TXT` | Uzantısı büyük harfli → `search?extension=.txt` bunu da bulur, arama büyük/küçük harfe duyarsız |
+| `report.txt` ve `report-copy.txt` | Aynı içerik, farklı isim → `duplicates` bunları tek grupta bulur, çünkü hash isimden değil İÇERİKTEN hesaplanır |
+| `DOCUMENT.TXT` | Uzantısı büyük harfli → `search?extension=.txt` bunu da bulur, arama büyük/küçük harfe duyarsız |
 
 Bakılacak yerler:
 

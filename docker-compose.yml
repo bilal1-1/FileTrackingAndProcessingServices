@@ -85,9 +85,9 @@ services:
 
     # Taranacak klasör host'tan bağlanıyor. ":ro" salt okunur demek — tarayıcı
     # dosyaları yalnızca okuyup hash'liyor, hiçbirine yazmıyor. İzni okumayla
-    # sınırlamak, bir hata durumunda izlenen dosyaların değişmesini engeller.
+    # sınırlamak, bir hata durumunda taranan dosyaların değişmesini engeller.
     volumes:
-      - ./izlenen:/data/watch:ro
+      - ./watched:/data/watch:ro
 
 volumes:
   pgdata:

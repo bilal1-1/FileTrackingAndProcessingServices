@@ -17,7 +17,7 @@
 # İzlenen klasör. İçeriği çalışma anında host'tan bağlanıyor (docker-compose.yml
 # içindeki :ro mount), imaja gömülmemeli — aksi halde container her açılışta
 # imajdaki eski kopyayı da taşırdı.
-izlenen/
+watched/
 
 # Testler container'da çalışmıyor, imajda yer kaplamalarına gerek yok.
 Tests/
