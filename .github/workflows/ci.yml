@@ -1,0 +1,40 @@
+name: CI
+
+# Her push ve pull request'te derleme ve testler koşar.
+# Amaç: "testlerim var" ile "testlerim her değişiklikte koşuyor" arasındaki
+# farkı kapatmak. Yerelde koşmayı unutmak mümkün, burada değil.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    # Testler Testcontainers ile gerçek bir postgres:17 container'ı açıyor.
+    # GitHub'ın ubuntu runner'larında Docker hazır kurulu geliyor, ek bir
+    # servis tanımına gerek yok — Testcontainers container'ı kendisi
+    # başlatıp test bitince siliyor.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: .NET kurulumu
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # restore, build ve test ayrı adımlar: hangi aşamada kırıldığı
+      # tek bakışta görünsün.
+      - name: Bağımlılıklar
+        run: dotnet restore
+
+      - name: Derleme
+        # --no-restore: bir önceki adım zaten yaptı, iki kez çalışmasın.
+        # Uyarıları hata sayıyoruz; proje şu an 0 uyarı ile derleniyor ve
+        # bu eşiğin sessizce kaymaması isteniyor.
+        run: dotnet build --no-restore --configuration Release -warnaserror
+
+      - name: Testler
+        run: dotnet test --no-build --configuration Release --verbosity normal
